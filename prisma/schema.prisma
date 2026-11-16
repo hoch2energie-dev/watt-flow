@@ -1,0 +1,394 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum Segment {
+  HAUSHALT
+  GEWERBE
+}
+
+enum RequestStatus {
+  NEU
+  IN_QUALIFIZIERUNG
+  QUALIFIZIERT
+  ANGEBOT_ERSTELLT
+  GEWONNEN
+  VERLOREN
+  UNGEEIGNET
+}
+
+enum OfferStatus {
+  ENTWURF
+  VERSENDET
+  ANGENOMMEN
+  ABGELEHNT
+}
+
+enum PaymentMode {
+  BAR
+  FINANZIERUNG
+  RATEN
+}
+
+enum VatCategory {
+  PV_NULL
+  REGEL
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  passwordHash       String
+  name               String
+  role               Role     @default(USER)
+  active             Boolean  @default(true)
+  mustChangePassword Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  assignedRequests Request[] @relation("RequestAssignee")
+  notes            Note[]
+  authoredOffers   Offer[]   @relation("OfferAuthor")
+  appointments     Appointment[]
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  seedKey     String?  @unique
+  segment     Segment  @default(HAUSHALT)
+  companyName String?
+  firstName   String
+  lastName    String
+  email       String?
+  phone       String?
+  street      String?
+  zip         String?
+  city        String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requests     Request[]
+  appointments Appointment[]
+  attachments  Attachment[]
+  notesLog     Note[]
+}
+
+model Request {
+  id            String        @id @default(cuid())
+  seedKey       String?       @unique
+  number        String        @unique
+  customerId    String
+  customer      Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  segment       Segment
+  title         String
+  source        String?
+  status        RequestStatus @default(NEU)
+  assigneeId    String?
+  assignee      User?         @relation("RequestAssignee", fields: [assigneeId], references: [id])
+  street        String?
+  zip           String?
+  city          String?
+  qualification Json
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  offers       Offer[]
+  notes        Note[]
+  attachments  Attachment[]
+  appointments Appointment[]
+
+  @@index([status])
+  @@index([segment])
+}
+
+model Note {
+  id         String    @id @default(cuid())
+  body       String
+  authorId   String
+  author     User      @relation(fields: [authorId], references: [id])
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  requestId  String?
+  request    Request?  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  offerId    String?
+  offer      Offer?    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+
+  @@index([requestId])
+  @@index([customerId])
+}
+
+model Attachment {
+  id           String    @id @default(cuid())
+  originalName String
+  storedName   String
+  mime         String
+  size         Int
+  kind         String    @default("datei")
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  requestId    String?
+  request      Request?  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  offerId      String?
+  offer        Offer?    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  uploadedById String?
+  createdAt    DateTime  @default(now())
+}
+
+model CatalogItem {
+  id               String      @id @default(cuid())
+  seedKey          String?     @unique
+  typeKey          String
+  manufacturer     String
+  model            String      @default("")
+  name             String
+  sku              String?
+  unit             String      @default("Stk")
+  purchasePriceNet Decimal     @db.Decimal(12, 2)
+  salesPriceNet    Decimal     @db.Decimal(12, 2)
+  vatCategory      VatCategory @default(REGEL)
+  specs            Json
+  description      String?
+  active           Boolean     @default(true)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  @@index([typeKey])
+  @@index([active])
+}
+
+model KanbanStage {
+  id        String  @id @default(cuid())
+  seedKey   String? @unique
+  name      String
+  sortOrder Int
+  color     String  @default("#1e5c42")
+  isWon     Boolean @default(false)
+  isLost    Boolean @default(false)
+  active    Boolean @default(true)
+  offers    Offer[]
+}
+
+model Offer {
+  id         String       @id @default(cuid())
+  seedKey    String?      @unique
+  number     String       @unique
+  requestId  String
+  request    Request      @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  title      String
+  status     OfferStatus  @default(ENTWURF)
+  stageId    String?
+  stage      KanbanStage? @relation(fields: [stageId], references: [id])
+  authorId   String?
+  author     User?        @relation("OfferAuthor", fields: [authorId], references: [id])
+
+  householdKwh        Decimal @default(0) @db.Decimal(12, 1)
+  heatPumpElectricKwh Decimal @default(0) @db.Decimal(12, 1)
+  heatPumpThermalKwh  Decimal @default(0) @db.Decimal(12, 1)
+  evKwh               Decimal @default(0) @db.Decimal(12, 1)
+  otherKwh            Decimal @default(0) @db.Decimal(12, 1)
+  electricityPriceEur Decimal @default(0.32) @db.Decimal(8, 4)
+  priceIncreasePct    Decimal @default(3) @db.Decimal(6, 2)
+
+  buildingType      String   @default("")
+  buildingYear      Int?
+  roofType          String   @default("")
+  orientation       String   @default("")
+  tiltDeg           Decimal? @db.Decimal(5, 1)
+  roofAreaM2        Decimal? @db.Decimal(8, 1)
+  monumentProtected Boolean  @default(false)
+  buildingNote      String   @default("")
+
+  existingPvKwp      Decimal @default(0) @db.Decimal(8, 2)
+  existingBatteryKwh Decimal @default(0) @db.Decimal(8, 2)
+  existingWallbox    Boolean @default(false)
+  existingHeating    String  @default("")
+
+  latitude       Decimal? @db.Decimal(9, 6)
+  longitude      Decimal? @db.Decimal(9, 6)
+  locationSource String   @default("")
+  locationLabel  String   @default("")
+
+  vatZeroEligible    Boolean   @default(true)
+  vatDeductible      Boolean   @default(false)
+  validUntil         DateTime?
+  signedAt           DateTime?
+  signedAttachmentId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variants     OfferVariant[]
+  notes        Note[]
+  attachments  Attachment[]
+  appointments Appointment[]
+
+  @@index([stageId])
+  @@index([status])
+}
+
+model OfferVariant {
+  id                       String      @id @default(cuid())
+  offerId                  String
+  offer                    Offer       @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  name                     String
+  sortOrder                Int
+  recommended              Boolean     @default(false)
+  specificYield            Decimal     @default(950) @db.Decimal(8, 1)
+  yieldProvider            String      @default("specific")
+  degradationPct           Decimal     @default(0.5) @db.Decimal(6, 2)
+  horizonYears             Int         @default(20)
+  eegTariffEur             Decimal     @default(0.078) @db.Decimal(8, 4)
+  postEegTariffEur         Decimal     @default(0.04) @db.Decimal(8, 4)
+  opexEurPerYear           Decimal     @default(150) @db.Decimal(12, 2)
+  batteryCyclesPerYear     Int         @default(220)
+  paymentMode              PaymentMode @default(BAR)
+  rebateNet                Decimal     @default(0) @db.Decimal(12, 2)
+  downPayment              Decimal     @default(0) @db.Decimal(12, 2)
+  financeYears             Int         @default(15)
+  financeInterestPct       Decimal     @default(4.5) @db.Decimal(6, 2)
+  instalmentCount          Int         @default(12)
+  instalmentIntervalMonths Int         @default(1)
+  instalmentInterestPct    Decimal     @default(0) @db.Decimal(6, 2)
+  kwpOverride              Decimal?    @db.Decimal(8, 2)
+  kwpManual                Boolean     @default(false)
+  yieldAnnualKwh           Decimal?    @db.Decimal(12, 1)
+  yieldMonthlyKwh          Json?
+  yieldNotice              String      @default("")
+  yieldCalculatedAt        DateTime?
+  yieldKey                 String      @default("")
+  createdAt                DateTime    @default(now())
+  updatedAt                DateTime    @updatedAt
+  lines                    OfferLine[]
+  faces                    RoofFace[]
+
+  @@index([offerId])
+}
+
+// Eine Dachfläche oder ein Strang. Lieferung 3 hängt hier Geometrie, Modulbelegung und Verschattung an.
+model RoofFace {
+  id            String       @id @default(cuid())
+  variantId     String
+  variant       OfferVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  name          String
+  sortOrder     Int
+  kwp           Decimal      @db.Decimal(8, 3)
+  tiltDeg       Decimal      @db.Decimal(5, 1)
+  azimuthDeg    Decimal      @db.Decimal(6, 1)
+  mounting      String       @default("gebaeude")
+  lossesPercent Decimal      @default(14) @db.Decimal(5, 1)
+  geometry      Json?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([variantId])
+}
+
+model PvgisCache {
+  id        String   @id @default(cuid())
+  cacheKey  String   @unique
+  response  Json
+  createdAt DateTime @default(now())
+}
+
+model GeocodeCache {
+  id        String   @id @default(cuid())
+  query     String   @unique
+  latitude  Decimal? @db.Decimal(9, 6)
+  longitude Decimal? @db.Decimal(9, 6)
+  label     String   @default("")
+  found     Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model OfferLine {
+  id               String       @id @default(cuid())
+  variantId        String
+  variant          OfferVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  catalogItemId    String?
+  typeKey          String?
+  section          String
+  name             String
+  description      String?
+  quantity         Decimal      @db.Decimal(12, 3)
+  unit             String
+  unitPriceNet     Decimal      @db.Decimal(12, 2)
+  purchasePriceNet Decimal      @db.Decimal(12, 2)
+  discountPercent  Decimal      @default(0) @db.Decimal(6, 2)
+  vatCategory      VatCategory
+  specs            Json
+  sortOrder        Int
+
+  @@index([variantId])
+}
+
+model Appointment {
+  id         String    @id @default(cuid())
+  seedKey    String?   @unique
+  title      String
+  startAt    DateTime
+  endAt      DateTime
+  location   String?
+  notes      String?
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id])
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  requestId  String?
+  request    Request?  @relation(fields: [requestId], references: [id])
+  offerId    String?
+  offer      Offer?    @relation(fields: [offerId], references: [id])
+  createdAt  DateTime  @default(now())
+
+  @@index([startAt])
+}
+
+model CompanySettings {
+  id                      String   @id @default("default")
+  companyName             String
+  street                  String   @default("")
+  zip                     String   @default("")
+  city                    String   @default("")
+  phone                   String   @default("")
+  email                   String   @default("")
+  website                 String   @default("")
+  taxNumber               String   @default("")
+  vatId                   String   @default("")
+  bankName                String   @default("")
+  iban                    String   @default("")
+  bic                     String   @default("")
+  logoStoredName          String?
+  primaryColor            String   @default("#1e5c42")
+  accentColor             String   @default("#c65b2e")
+  defaultSpecificYield    Decimal  @default(950) @db.Decimal(8, 1)
+  defaultEegTariff        Decimal  @default(0.078) @db.Decimal(8, 4)
+  defaultPostEeg          Decimal  @default(0.04) @db.Decimal(8, 4)
+  defaultElectricityPrice Decimal  @default(0.32) @db.Decimal(8, 4)
+  defaultPriceIncrease    Decimal  @default(3) @db.Decimal(6, 2)
+  defaultDegradation      Decimal  @default(0.5) @db.Decimal(6, 2)
+  defaultHorizonYears     Int      @default(20)
+  defaultOpex             Decimal  @default(150) @db.Decimal(12, 2)
+  defaultBatteryCycles    Int      @default(220)
+  offerValidityDays       Int      @default(30)
+  pdfPages                Json
+  aboutText               String
+  legalText               String
+  coverSubtitle           String   @default("Angebot für Ihre Energieversorgung")
+  updatedAt               DateTime @updatedAt
+}
+
+model Counter {
+  id    String @id
+  value Int
+}
