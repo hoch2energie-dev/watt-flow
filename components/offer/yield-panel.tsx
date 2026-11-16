@@ -18,12 +18,15 @@ export function YieldPanel({
   address,
   onOffer,
   onVariant,
+  onPlan,
 }: {
   offer: OfferDTO;
   variant: VariantDTO;
   address: string;
   onOffer: (patch: Partial<OfferDTO>) => void;
   onVariant: (patch: Partial<VariantDTO>) => void;
+  /** Öffnet die 3D-Planung, nachdem der Aufrufer gespeichert hat. Ohne Angabe ein einfacher Link. */
+  onPlan?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const faces = variant.faces;
@@ -83,7 +86,11 @@ export function YieldPanel({
           <p className="text-xs text-muted">Kompassrose: 0 Nord, 90 Ost, 180 Süd, 270 West. Mehrere Flächen werden addiert. Die Dachplanung setzt Grundriss, Module und Verschattung auf dieselben Flächen.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <ButtonLink href={`/angebote/${offer.id}/dach3d?variante=${variant.id}`} size="sm">3D-Planung</ButtonLink>
+          {onPlan ? (
+            <Button type="button" size="sm" onClick={onPlan}>3D-Planung</Button>
+          ) : (
+            <ButtonLink href={`/angebote/${offer.id}/dach3d?variante=${variant.id}`} size="sm">3D-Planung</ButtonLink>
+          )}
           <ButtonLink href={`/angebote/${offer.id}/dach?variante=${variant.id}`} variant="secondary" size="sm">Dach planen</ButtonLink>
           <Button type="button" size="sm" disabled={busy} onClick={() => void calculate()}>{busy ? "PVGIS rechnet…" : "Ertrag berechnen (PVGIS)"}</Button>
         </div>

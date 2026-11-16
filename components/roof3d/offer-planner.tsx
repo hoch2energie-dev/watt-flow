@@ -19,12 +19,15 @@ export function OfferPlanner3D({
   siteAddress,
   customerName,
   locked,
+  groundOverride,
 }: {
   initial: OfferDTO;
   variantId: string;
   siteAddress: string;
   customerName: string;
   locked: boolean;
+  /** Ersetzt das Luftbild. Nur für Vorschau und Tests, die keine Bildserver erreichen. */
+  groundOverride?: GroundSource;
 }) {
   const [offer, setOffer] = useState(initial);
   const [place, setPlace] = useState<Place>({ latitude: initial.latitude, longitude: initial.longitude, label: initial.locationLabel, source: initial.locationSource });
@@ -34,11 +37,19 @@ export function OfferPlanner3D({
 
   const { latitude, longitude } = place;
   const origin = useMemo<LngLat | null>(() => (latitude != null && longitude != null ? [longitude, latitude] : null), [latitude, longitude]);
-  const sources = useMemo(() => (origin ? aerialSources(origin) : []), [origin]);
+  /* Reihenfolge der Versuche: Orthofoto NRW direkt, dann über den eigenen Server, dann das Weltluftbild. */
+  const sources = useMemo(() => {
+    if (!origin) return [];
+    const direct = aerialSources(origin);
+    const nrw = direct.find((source) => source.provider === "nrw");
+    if (!nrw) return direct;
+    return [nrw, { ...nrw, url: `/api/roof/aerial?lat=${origin[1]}&lon=${origin[0]}` }, ...direct.filter((source) => source !== nrw)];
+  }, [origin]);
   const ground = useMemo<GroundSource>(() => {
+    if (groundOverride) return groundOverride;
     const source = sources[sourceIndex];
     return source ? { kind: "image", url: source.url, sizeM: AERIAL_SIZE_M, credit: source.credit } : { kind: "none" };
-  }, [sources, sourceIndex]);
+  }, [groundOverride, sources, sourceIndex]);
   /* Nur beim Öffnen und bei neuem Standort lesen. Danach führt die Planung selbst Buch. */
   const firstFaces = useMemo(() => variant?.faces ?? [], [variant?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const buildings = useMemo(() => (origin ? buildingsFromFaces(firstFaces, origin) : []), [firstFaces, origin]);
@@ -66,7 +77,9 @@ export function OfferPlanner3D({
     setOffer(nextOffer);
     const planned = faces.filter((face) => face.geometry?.building).length;
     const base = planned === 0 ? "Gespeichert. Es liegt kein Dach in der Planung." : `Gespeichert. ${planned} ${planned === 1 ? "Dachfläche steht" : "Dachflächen stehen"} mit Neigung und Ausrichtung im Schritt Solar.`;
-    return emptied.length > 0 ? `${base} ${emptied.length === 1 ? "Eine Fläche wurde" : `${emptied.length} Flächen wurden`} neu angelegt, dort fehlen Module und Leistung wieder.` : base;
+    if (emptied.length > 0) return `${base} ${emptied.length === 1 ? "Eine Fläche wurde" : `${emptied.length} Flächen wurden`} neu angelegt, dort fehlen Module und Leistung wieder.`;
+    const open = faces.some((face) => face.geometry?.building && face.kwp <= 0);
+    return open && planned > 0 ? `${base} Die Leistung je Fläche (kWp) wird dort eingetragen, bis die Modulbelegung in 3D folgt.` : base;
   }
 
   return (

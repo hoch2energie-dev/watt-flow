@@ -6,15 +6,31 @@ import { useState } from "react";
 import { CalendarDays, Columns3, FileText, Inbox, LayoutDashboard, LogOut, Menu, Package, Search, Settings, Users, X } from "lucide-react";
 import { Notice } from "@/components/ui";
 
-const NAV = [
-  { href: "/uebersicht", label: "Übersicht", icon: LayoutDashboard },
-  { href: "/anfragen", label: "Anfragen", icon: Inbox },
-  { href: "/kunden", label: "Kunden", icon: Users },
-  { href: "/angebote", label: "Angebote", icon: FileText },
-  { href: "/katalog", label: "Katalog", icon: Package },
-  { href: "/board", label: "Board", icon: Columns3 },
-  { href: "/kalender", label: "Termine", icon: CalendarDays },
-  { href: "/einstellungen", label: "Einstellungen", icon: Settings },
+/** Hauptnavigation in Gruppen. Die erste Gruppe steht ohne Überschrift. */
+const NAV_GROUPS = [
+  {
+    label: null,
+    items: [
+      { href: "/uebersicht", label: "Übersicht", icon: LayoutDashboard },
+      { href: "/kunden", label: "Kunden", icon: Users },
+      { href: "/kalender", label: "Termine", icon: CalendarDays },
+    ],
+  },
+  {
+    label: "Projekte",
+    items: [
+      { href: "/anfragen", label: "Anfragen", icon: Inbox },
+      { href: "/angebote", label: "Angebote", icon: FileText },
+      { href: "/board", label: "Board", icon: Columns3 },
+    ],
+  },
+  {
+    label: "Verwaltung",
+    items: [
+      { href: "/katalog", label: "Katalog", icon: Package },
+      { href: "/einstellungen", label: "Einstellungen", icon: Settings },
+    ],
+  },
 ];
 
 export function Shell({
@@ -33,23 +49,28 @@ export function Shell({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const nav = (
-    <nav className="flex flex-1 flex-col gap-1" aria-label="Hauptnavigation">
-      {NAV.map((item) => {
-        const active = item.href === "/uebersicht" ? pathname === item.href : pathname.startsWith(item.href);
-        const Icon = item.icon;
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={active ? "page" : undefined}
-            onClick={() => setOpen(false)}
-            className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold ${active ? "bg-white/10 text-white" : "text-sidebar-muted hover:bg-white/5 hover:text-white"}`}
-          >
-            <Icon size={18} aria-hidden />
-            {item.label}
-          </Link>
-        );
-      })}
+    <nav className="flex flex-1 flex-col gap-4 overflow-y-auto" aria-label="Hauptnavigation">
+      {NAV_GROUPS.map((group) => (
+        <div key={group.label ?? "start"} className="flex flex-col gap-1">
+          {group.label ? <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-[0.12em] text-sidebar-muted/80">{group.label}</p> : null}
+          {group.items.map((item) => {
+            const active = item.href === "/uebersicht" ? pathname === item.href : pathname.startsWith(item.href);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                onClick={() => setOpen(false)}
+                className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold ${active ? "bg-white/10 text-white" : "text-sidebar-muted hover:bg-white/5 hover:text-white"}`}
+              >
+                <Icon size={18} aria-hidden />
+                {item.label}
+              </Link>
+            );
+          })}
+        </div>
+      ))}
     </nav>
   );
 

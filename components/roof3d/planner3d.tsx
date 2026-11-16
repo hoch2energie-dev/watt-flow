@@ -58,6 +58,7 @@ export function Planner3D({ title, subtitle, initial, ground, locked = false, on
   const [groundFailed, setGroundFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(initial);
+  const [closeArmed, setCloseArmed] = useState(false);
   const lastEdit = useRef({ key: "", time: 0 });
 
   const buildings = live ?? history.present;
@@ -72,6 +73,8 @@ export function Planner3D({ title, subtitle, initial, ground, locked = false, on
     lastEdit.current = { key, time: now };
     setHistory((current) => ({ past: merge ? current.past : [...current.past.slice(-49), current.present], present: next, future: [] }));
     setLive(null);
+    setMessage(null);
+    setCloseArmed(false);
   }, []);
   const undo = useCallback(() => {
     lastEdit.current = { key: "", time: 0 };
@@ -141,6 +144,13 @@ export function Planner3D({ title, subtitle, initial, ground, locked = false, on
       stageRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!unsaved) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [unsaved]);
 
   useEffect(() => stageRef.current?.setBuildings(buildings, selectedId), [buildings, selectedId]);
   useEffect(() => stageRef.current?.setTool(tool), [tool]);
@@ -226,7 +236,18 @@ export function Planner3D({ title, subtitle, initial, ground, locked = false, on
           <li title="Folgt in einer späteren Stufe"><span>3</span>Strings</li>
         </ol>
         {closeHref ? (
-          <a className="r3d-icon" href={closeHref} aria-label="Planung schließen" title={unsaved ? "Schließen. Ungespeicherte Änderungen gehen verloren." : "Schließen"}>
+          <a
+            className="r3d-icon"
+            href={closeHref}
+            aria-label="Planung schließen"
+            title="Schließen"
+            onClick={(event) => {
+              if (!unsaved || closeArmed || locked) return;
+              event.preventDefault();
+              setCloseArmed(true);
+              setMessage("Es gibt ungespeicherte Änderungen. Zuerst speichern, oder zum Verwerfen noch einmal auf Schließen klicken.");
+            }}
+          >
             <X size={18} />
           </a>
         ) : null}

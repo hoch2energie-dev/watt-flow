@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { deleteOffer, moveOffer, saveOffer, setOfferStatus, unlockOffer } from "@/app/actions/offers";
 import { Field, NumberField, SelectInput, TextArea, TextInput } from "@/components/fields";
+import { OfferHub } from "@/components/offer/hub";
 import { LineEditor } from "@/components/offer/line-editor";
+import { OfferRail } from "@/components/offer/rail";
 import { ResultsView } from "@/components/offer/results";
 import { YieldPanel } from "@/components/offer/yield-panel";
 import { Badge, Button, Notice } from "@/components/ui";
@@ -13,19 +15,8 @@ import { BUILDING_TYPES, HEATING_TYPES, ORIENTATIONS, ROOF_TYPES } from "@/lib/c
 import { annualConsumption, blankVariant, toCalcInput, type CatalogOption, type OfferDTO, type VariantDefaults, type VariantDTO } from "@/lib/domain";
 import { formatEuro, formatNumber, formatPercent } from "@/lib/format";
 import { OFFER_STATUS_LABEL, PAYMENT_LABEL } from "@/lib/labels";
-
-const STEPS = [
-  { id: "verbrauch", label: "Verbrauch" },
-  { id: "gebaeude", label: "Gebäude" },
-  { id: "bestand", label: "Bestand" },
-  { id: "solar", label: "Solar" },
-  { id: "speicher", label: "Speicher" },
-  { id: "wallbox", label: "Wallbox" },
-  { id: "waerme", label: "Wärmepumpe" },
-  { id: "extras", label: "Extras" },
-  { id: "zahlung", label: "Zahlung" },
-  { id: "ergebnisse", label: "Ergebnisse" },
-];
+import { navigate } from "@/lib/navigate";
+import { STEP_ORDER } from "@/lib/offer-overview";
 
 type Meta = {
   customerName: string;
@@ -43,6 +34,8 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
   const [offer, setOffer] = useState(initial);
   const [variantId, setVariantId] = useState(initial.variants.find((variant) => variant.recommended)?.id ?? initial.variants[0]?.id);
   const [step, setStep] = useState(0);
+  /* Die Übersicht ist der Einstieg. Ein Klick auf einen Schritt wechselt in die Bearbeitung. */
+  const [view, setView] = useState<"hub" | "steps">("hub");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -62,7 +55,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
   }
 
   const result = useMemo(() => (variant ? calculateOffer(toCalcInput(offer, variant)) : null), [offer, variant]);
-  const current = STEPS[step];
+  const current = { id: STEP_ORDER[step] };
 
   async function persist() {
     setSaving(true);
@@ -80,22 +73,28 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
 
   if (!variant || !result) return <p>Dem Angebot fehlt eine Variante.</p>;
 
+  /** Speichert zuerst, damit in der 3D-Planung der aktuelle Stand liegt, und öffnet sie dann. */
+  async function openPlanner() {
+    if (!meta.locked) {
+      const ok = await persist();
+      if (!ok) return;
+    }
+    navigate(`/angebote/${offer.id}/dach3d?variante=${variant.id}`);
+  }
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[220px_1fr]">
-      <aside className="lg:sticky lg:top-20 lg:self-start">
-        <div className="flex gap-2 overflow-x-auto lg:flex-col">
-          {STEPS.map((item, index) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setStep(index)}
-              className={`whitespace-nowrap rounded-xl px-3 py-2 text-left text-sm font-semibold ${index === step ? "bg-brand text-white" : "bg-white text-ink"}`}
-            >
-              {index + 1}. {item.label}
-            </button>
-          ))}
-        </div>
-      </aside>
+    <div className="grid gap-4 lg:grid-cols-[250px_1fr]">
+      <OfferRail
+        offer={offer}
+        variant={variant}
+        result={result}
+        active={view === "hub" ? "hub" : current.id}
+        onOpen={(target) => {
+          if (target === "hub") return setView("hub");
+          setStep(STEP_ORDER.indexOf(target));
+          setView("steps");
+        }}
+      />
       <div className="min-w-0">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -142,6 +141,19 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
           ) : null}
         </div>
 
+        {view === "hub" ? (
+          <OfferHub
+            offer={offer}
+            variant={variant}
+            result={result}
+            locked={meta.locked}
+            onOpen={(target) => {
+              setStep(STEP_ORDER.indexOf(target));
+              setView("steps");
+            }}
+            onPlan={() => void openPlanner()}
+          />
+        ) : (
         <fieldset disabled={meta.locked} className="mt-4 rounded-2xl border border-line bg-elevated p-4 sm:p-5 disabled:opacity-80">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
             <Field label="Variantenname">
@@ -211,7 +223,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
                   {variant.kwpManual ? <button type="button" className="mt-1 font-semibold text-brand" onClick={() => patchVariant({ kwpManual: false })}>Aus den Modulen rechnen</button> : null}
                 </div>
               </div>
-              <YieldPanel offer={offer} variant={variant} address={meta.siteAddress} onOffer={patchOffer} onVariant={patchVariant} />
+              <YieldPanel offer={offer} variant={variant} address={meta.siteAddress} onOffer={patchOffer} onVariant={patchVariant} onPlan={() => void openPlanner()} />
               <h3 className="font-semibold">Module</h3>
               <LineEditor section="module" lines={variant.lines} catalog={catalog} onChange={setLines} />
               <h3 className="font-semibold">Wechselrichter</h3>
@@ -292,6 +304,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
             </div>
           ) : null}
         </fieldset>
+        )}
 
         <div className="sticky bottom-3 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
           <div className="text-sm">
@@ -300,9 +313,9 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
             {message ? <span className="ml-2 text-ok">{message}</span> : null}
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>Zurück</Button>
+            {view === "steps" ? <Button type="button" variant="secondary" disabled={step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>Zurück</Button> : null}
             {!meta.locked ? <Button type="button" variant="secondary" disabled={saving} onClick={() => void persist()}>{saving ? "Speichert…" : "Speichern"}</Button> : null}
-            {step < STEPS.length - 1 ? (
+            {view === "hub" ? null : step < STEP_ORDER.length - 1 ? (
               <Button type="button" onClick={async () => {
                 if (!meta.locked) {
                   const ok = await persist();

@@ -81,6 +81,7 @@ Keine API-Schlüssel. Der Server muss diese HTTPS-Hosts erreichen:
 - `re.jrc.ec.europa.eu` — PVGIS-Ertrag und Horizontprofil (PVGIS © Europäische Union)
 - `nominatim.openstreetmap.org` — Adresssuche, mit eigenem User-Agent und Zwischenspeicher
 - `ogc-api.nrw.de` — LoD2-Gebäude in Nordrhein-Westfalen, Datenlizenz Deutschland – Zero – Version 2.0
+- `www.wms.nrw.de` — Orthofoto NRW für die 3D-Planung, nur als Ausweichweg, wenn der Browser das Bild nicht direkt laden darf (© Geobasis NRW, Datenlizenz Deutschland – Zero – Version 2.0)
 
 Das Luftbild lädt der Browser des Mitarbeiters, nicht der Server:
 
