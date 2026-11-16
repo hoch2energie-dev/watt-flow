@@ -89,3 +89,16 @@
   .r3d-tools button span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .r3d-icon svg { transition: none; } }
+
+/* Im Programm liegt die Planung über der ganzen Seite, auch über der Seitenleiste. */
+.r3d-screen { position: fixed; inset: 0; z-index: 50; background: var(--bg); }
+.r3d-locate { height: 100%; display: grid; place-items: center; padding: 24px; }
+.r3d-locate form { width: min(440px, 100%); display: flex; flex-direction: column; gap: 12px; background: var(--elevated); border: 1px solid var(--line); border-radius: 14px; padding: 22px; box-shadow: 0 6px 24px rgba(20, 30, 25, 0.12); }
+.r3d-locate h1 { margin: 0; font-family: var(--font-display, Georgia, serif); font-size: 24px; font-weight: 600; }
+.r3d-locate p { margin: 0; color: var(--muted); }
+.r3d-locate p.is-error { color: var(--danger); }
+.r3d-locate input { font: inherit; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; }
+.r3d-locate div { display: flex; gap: 8px; align-items: center; }
+.r3d-locate button { font: inherit; font-weight: 600; border: 0; border-radius: 8px; background: var(--brand); color: #fff; padding: 9px 14px; cursor: pointer; }
+.r3d-locate button:disabled { opacity: 0.5; cursor: default; }
+.r3d-locate a { color: var(--brand); font-weight: 600; }

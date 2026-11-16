@@ -1,4 +1,5 @@
 import type { LngLat } from "@/lib/roof/geo";
+import type { RoofType } from "@/lib/roof3d/building";
 
 /** Eckpunkte in Metern, Ost und Nord, bezogen auf den Schwerpunkt der Fläche. */
 export type PlanPoint = [number, number];
@@ -39,6 +40,22 @@ export type RoofShading = {
 };
 
 /**
+ * Gebäude der 3D-Planung, aus dem eine Fläche entstanden ist. Es liegt an jeder
+ * seiner Flächen, damit die Planung es ohne eigene Tabelle wieder zusammensetzen kann.
+ */
+export type StoredBuilding = {
+  id: string;
+  /** Kante des Umrisses, an der diese Fläche ihre Traufe hat. */
+  edge: number;
+  outline: LngLat[];
+  roofType: RoofType;
+  wallHeightM: number;
+  overhangM: number;
+  pitchDeg: number[];
+  ridgeSwap: boolean;
+};
+
+/**
  * Grundriss einer Dachfläche. Liegt im bestehenden JSON-Feld `RoofFace.geometry`,
  * damit keine weitere Migration nötig ist.
  */
@@ -49,6 +66,8 @@ export type RoofGeometry = {
   placement: ModulePlacement | null;
   modules: PlannedModule[];
   shading: RoofShading;
+  /** Nur bei Flächen aus der 3D-Planung. */
+  building?: StoredBuilding;
 };
 
 export function blankGeometry(ring: LngLat[]): RoofGeometry {

@@ -1,4 +1,4 @@
-import type { HorizonSample, ModulePlacement, PlannedModule, RoofGeometry, RoofObstacle } from "@/lib/roof/types";
+import type { HorizonSample, ModulePlacement, PlannedModule, RoofGeometry, RoofObstacle, StoredBuilding } from "@/lib/roof/types";
 
 const MAX_RING = 80;
 const MAX_OBSTACLES = 12;
@@ -12,6 +12,7 @@ export function parseRoofGeometry(value: unknown): RoofGeometry | null {
   if (!ring || ring.length < 3) return null;
   const obstacles = Array.isArray(raw.obstacles) ? raw.obstacles.slice(0, MAX_OBSTACLES).map(parseObstacle).filter((entry): entry is RoofObstacle => entry != null) : [];
   const modules = Array.isArray(raw.modules) ? raw.modules.slice(0, MAX_MODULES).map(parseModule).filter((entry): entry is PlannedModule => entry != null) : [];
+  const building = parseBuilding(raw.building);
   return {
     version: 1,
     ring,
@@ -19,6 +20,37 @@ export function parseRoofGeometry(value: unknown): RoofGeometry | null {
     placement: parsePlacement(raw.placement),
     modules,
     shading: parseShading(raw.shading),
+    ...(building ? { building } : {}),
+  };
+}
+
+const ROOF_TYPES = ["sattel", "walm", "flach"] as const;
+
+function parseBuilding(value: unknown): StoredBuilding | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const id = typeof raw.id === "string" ? raw.id.slice(0, 60) : "";
+  const outline = parseRing(raw.outline, 12);
+  const roofType = ROOF_TYPES.find((type) => type === raw.roofType);
+  const edge = Number(raw.edge);
+  const wallHeightM = Number(raw.wallHeightM);
+  const overhangM = Number(raw.overhangM);
+  if (!id || !outline || outline.length < 3 || !roofType) return null;
+  if (!Number.isInteger(edge) || edge < 0 || edge >= outline.length) return null;
+  if (!Number.isFinite(wallHeightM) || !Number.isFinite(overhangM)) return null;
+  const pitches = Array.isArray(raw.pitchDeg) ? raw.pitchDeg : [];
+  return {
+    id,
+    edge,
+    outline,
+    roofType,
+    wallHeightM: Math.max(0.2, Math.min(40, wallHeightM)),
+    overhangM: Math.max(0, Math.min(1.5, overhangM)),
+    pitchDeg: outline.map((_, index) => {
+      const pitch = Number(pitches[index]);
+      return Number.isFinite(pitch) ? Math.max(5, Math.min(70, pitch)) : 30;
+    }),
+    ridgeSwap: raw.ridgeSwap === true,
   };
 }
 

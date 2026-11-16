@@ -166,3 +166,107 @@ describe("Zeichnen", () => {
     expect(polygonArea(pushed)).toBeCloseTo(12 * 9, 9);
   });
 });
+
+import { parseRoofGeometry } from "@/lib/roof/parse";
+import { toLocal, type LngLat } from "@/lib/roof/geo";
+import type { RoofFaceInput } from "@/lib/pvgis/types";
+import { AERIAL_SIZE_M, aerialSources } from "@/lib/roof3d/aerial";
+import { buildingsFromFaces, facesFromBuildings, resetFaces } from "@/lib/roof3d/faces";
+import { moveOutline } from "@/lib/roof3d/draw";
+
+describe("Dachflächen fürs Angebot", () => {
+  const origin: LngLat = [6.8921, 51.0912];
+  const spec = { ...newBuilding("haus", rect), pitchDeg: [35, 30, 25, 30] };
+  const legacy: RoofFaceInput = {
+    id: "alt-1",
+    name: "Garage",
+    kwp: 2.4,
+    tiltDeg: 10,
+    azimuthDeg: 200,
+    mounting: "gebaeude",
+    lossesPercent: 14,
+    geometry: null,
+  };
+
+  it("erzeugt je Dachseite eine Fläche mit Neigung und Ausrichtung und lässt fremde Flächen stehen", () => {
+    const faces = facesFromBuildings([spec], origin, [legacy], "v1");
+    expect(faces.map((face) => face.id)).toEqual(["v1:haus:0", "v1:haus:2", "alt-1"]);
+    expect(faces.map((face) => face.name)).toEqual(["Dach Süd", "Dach Nord", "Garage"]);
+    expect([faces[0].tiltDeg, faces[0].azimuthDeg, faces[0].kwp]).toEqual([35, 180, 0]);
+    expect([faces[1].tiltDeg, faces[1].azimuthDeg]).toEqual([25, 0]);
+    expect(faces[0].geometry?.building?.edge).toBe(0);
+    expect(faces[2]).toBe(legacy);
+    const corner = toLocal(faces[0].geometry!.ring[0], origin);
+    expect(Math.hypot(corner[0], corner[1])).toBeLessThan(12);
+  });
+
+  it("übersteht Speichern und Laden: aus den Flächen wird wieder dasselbe Gebäude", () => {
+    const faces = facesFromBuildings([spec], origin, [], "v1").map((face) => ({ ...face, geometry: parseRoofGeometry(JSON.parse(JSON.stringify(face.geometry))) }));
+    const [loaded] = buildingsFromFaces(faces, origin);
+    expect(loaded.roofType).toBe("sattel");
+    expect(loaded.pitchDeg).toEqual([35, 30, 25, 30]);
+    expect([loaded.wallHeightM, loaded.overhangM, loaded.ridgeSwap]).toEqual([3, 0.2, false]);
+    loaded.outline.forEach((point, index) => {
+      expect(point[0]).toBeCloseTo(rect[index][0], 5);
+      expect(point[1]).toBeCloseTo(rect[index][1], 5);
+    });
+    expect(buildingsFromFaces([legacy], origin)).toEqual([]);
+  });
+
+  it("behält Leistung und Module, solange die Fläche am selben Ort liegt", () => {
+    const first = facesFromBuildings([spec], origin, [], "v1");
+    const planned = first.map((face, index) => (index === 0 ? { ...face, name: "Südseite groß", kwp: 8.8 } : face));
+    const steeper = facesFromBuildings([{ ...spec, wallHeightM: 4.5 }], origin, planned, "v1");
+    expect([steeper[0].name, steeper[0].kwp]).toEqual(["Südseite groß", 8.8]);
+    const moved = facesFromBuildings([{ ...spec, outline: moveOutline(spec.outline, [2, 0]) }], origin, planned, "v1");
+    expect([moved[0].id, moved[0].name, moved[0].kwp]).toEqual(["v1:haus:0", "Dach Süd", 0]);
+    expect(resetFaces(planned, moved).map((face) => face.id)).toEqual(["v1:haus:0"]);
+    expect(resetFaces(planned, steeper)).toEqual([]);
+  });
+
+  it("kopierte Variante: Flächen behalten ihre eigene Kennung, neue Flächen bekommen die der Variante", () => {
+    const original = facesFromBuildings([spec], origin, [], "v1").map((face) => ({ ...face, kwp: 5 }));
+    const copied = original.map((face, index) => ({ ...face, id: `kopie-${index}` }));
+    const again = facesFromBuildings([spec], origin, copied, "v2");
+    expect(again.map((face) => [face.id, face.kwp])).toEqual([["kopie-0", 5], ["kopie-1", 5]]);
+    const hipped = facesFromBuildings([{ ...spec, roofType: "walm" }], origin, copied, "v2");
+    expect(hipped.map((face) => face.id)).toEqual(["kopie-0", "v2:haus:1", "kopie-1", "v2:haus:3"]);
+    const ids = [...original, ...hipped].map((face) => face.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("verwirft ein beschädigtes Gebäude, ohne die Fläche zu verlieren", () => {
+    const [face] = facesFromBuildings([spec], origin, [], "v1");
+    const broken = parseRoofGeometry({ ...face.geometry, building: { ...face.geometry!.building, edge: 9 } });
+    expect(broken?.ring.length).toBeGreaterThanOrEqual(3);
+    expect(broken?.building).toBeUndefined();
+  });
+
+  it("mehrere Gebäude und Flachdach bekommen eigene Namen", () => {
+    const flat = { ...newBuilding("halle", moveOutline(rect, [30, 0])), roofType: "flach" as const };
+    const faces = facesFromBuildings([spec, flat], origin, [], "v1");
+    expect(faces.map((face) => face.name)).toEqual(["Dach 1 Süd", "Dach 1 Nord", "Dach 2 flach"]);
+    expect(faces[2].tiltDeg).toBe(0);
+  });
+});
+
+describe("Luftbild", () => {
+  it("fragt in NRW zuerst das Orthofoto an, mit Breite vor Länge und 160 m Kantenlänge", () => {
+    const sources = aerialSources([6.8921, 51.0912]);
+    expect(sources.map((source) => source.provider)).toEqual(["nrw", "esri"]);
+    const url = new URL(sources[0].url);
+    const [south, west, north, east] = url.searchParams.get("BBOX")!.split(",").map(Number);
+    expect(south).toBeLessThan(51.0912);
+    expect(north).toBeGreaterThan(51.0912);
+    expect((north - south) * 111_320).toBeCloseTo(AERIAL_SIZE_M, 1);
+    expect((east - west) * 111_320 * Math.cos((51.0912 * Math.PI) / 180)).toBeCloseTo(AERIAL_SIZE_M, 1);
+    expect(url.searchParams.get("CRS")).toBe("EPSG:4326");
+    const esri = new URL(sources[1].url);
+    expect(esri.pathname.endsWith("/MapServer/export")).toBe(true);
+    expect(esri.searchParams.get("bbox")!.split(",").map(Number)[0]).toBeCloseTo(west, 6);
+  });
+
+  it("nimmt außerhalb von NRW nur das Weltluftbild", () => {
+    expect(aerialSources([11.57, 48.14]).map((source) => source.provider)).toEqual(["esri"]);
+  });
+});

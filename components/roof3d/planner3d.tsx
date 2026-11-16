@@ -32,6 +32,8 @@ export type Planner3DProps = {
   locked?: boolean;
   /** Speichert und gibt die Meldung für die Statuszeile zurück. Wirft bei Fehlern. */
   onSave?: (buildings: BuildingSpec[]) => Promise<string>;
+  /** Das Luftbild ließ sich nicht laden. Der Aufrufer kann eine andere Quelle geben. */
+  onGroundError?: () => void;
   closeHref?: string;
 };
 
@@ -40,7 +42,7 @@ type History = { past: BuildingSpec[][]; present: BuildingSpec[]; future: Buildi
 const numberText = (value: number, digits = 1) => value.toFixed(digits).replace(".", ",");
 const newId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `b${Date.now()}${Math.round(Math.random() * 1e6)}`);
 
-export function Planner3D({ title, subtitle, initial, ground, locked = false, onSave, closeHref }: Planner3DProps) {
+export function Planner3D({ title, subtitle, initial, ground, locked = false, onSave, onGroundError, closeHref }: Planner3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
   const stageRef = useRef<Stage | null>(null);
@@ -106,8 +108,8 @@ export function Planner3D({ title, subtitle, initial, ground, locked = false, on
   }, [history.present, locked, onSave, saving]);
 
   /* Die Bühne lebt außerhalb von React. Ihre Rückrufe lesen den jeweils aktuellen Stand über diese Ref. */
-  const handlers = useRef({ present: history.present, commit, locked });
-  handlers.current = { present: history.present, commit, locked };
+  const handlers = useRef({ present: history.present, commit, locked, onGroundError });
+  handlers.current = { present: history.present, commit, locked, onGroundError };
 
   useEffect(() => {
     if (!canvasRef.current || !overlayRef.current) return;
@@ -127,7 +129,10 @@ export function Planner3D({ title, subtitle, initial, ground, locked = false, on
       },
       onDraft: setDraftPoints,
       onView: setView,
-      onGroundError: () => setGroundFailed(true),
+      onGroundError: () => {
+        setGroundFailed(true);
+        handlers.current.onGroundError?.();
+      },
     });
     stageRef.current = stage;
     stage.frameAll();
