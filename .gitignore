@@ -45,3 +45,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# gebaute Vorschau der 3D-Planung
+/preview/roof3d/dist

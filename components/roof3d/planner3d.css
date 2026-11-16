@@ -1,0 +1,91 @@
+/* 3D-Planung: Zeichenfläche füllt den Platz, Leisten schweben darüber. Farben aus app/globals.css. */
+.r3d { position: relative; width: 100%; height: 100%; min-height: 480px; overflow: hidden; background: #cfd8cf; color: var(--ink); font-size: 14px; line-height: 1.35; user-select: none; }
+.r3d-canvas, .r3d-overlay { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.r3d-canvas { touch-action: none; }
+.r3d-overlay { pointer-events: none; }
+
+.r3d-face { fill: rgba(28, 38, 34, 0.5); stroke: rgba(255, 255, 255, 0.85); stroke-width: 1.2; stroke-linejoin: round; }
+.r3d-face.is-selected { fill: rgba(30, 92, 66, 0.42); }
+.r3d-outline { fill: none; stroke: #fffdf8; stroke-width: 2; stroke-linejoin: round; }
+.r3d-outline.is-selected { stroke: var(--accent); stroke-width: 2.5; }
+.r3d-edge3d { fill: rgba(198, 91, 46, 0.1); stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.r3d-handle { fill: #fffdf8; stroke: var(--accent); stroke-width: 2.5; }
+.r3d-draft { fill: none; stroke: #fffdf8; stroke-width: 2.5; stroke-linejoin: round; }
+.r3d-draft.is-live { stroke-dasharray: 6 5; }
+.r3d-guide { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 2 5; }
+.r3d-angle { fill: none; stroke: var(--accent); stroke-width: 2; }
+.r3d-point { fill: #fffdf8; stroke: var(--ink); stroke-width: 1.5; }
+.r3d-point.is-first { fill: rgba(255, 253, 248, 0.25); stroke: #fffdf8; stroke-width: 2.5; }
+.r3d-point.is-hot { fill: var(--accent); stroke: #fffdf8; }
+.r3d-label rect { fill: var(--ink); opacity: 0.88; }
+.r3d-label text { fill: #fffdf8; font: 600 12px var(--font-sans, "Source Sans 3", sans-serif); font-variant-numeric: tabular-nums; }
+
+.r3d-head { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; align-items: flex-start; gap: 12px; pointer-events: none; }
+.r3d-head > * { pointer-events: auto; }
+.r3d-head > div { background: var(--elevated); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; box-shadow: 0 4px 16px rgba(20, 30, 25, 0.14); max-width: 300px; }
+.r3d-title { margin: 0; font-family: var(--font-display, Georgia, serif); font-weight: 600; font-size: 17px; line-height: 1.15; }
+.r3d-sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r3d-steps { list-style: none; margin: 0 auto; padding: 4px; display: flex; gap: 2px; background: var(--elevated); border: 1px solid var(--line); border-radius: 999px; box-shadow: 0 4px 16px rgba(20, 30, 25, 0.14); }
+.r3d-steps li { display: flex; align-items: center; gap: 6px; padding: 5px 12px 5px 6px; border-radius: 999px; color: var(--muted); }
+.r3d-steps li span { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); font-size: 12px; font-weight: 600; }
+.r3d-steps li.is-active { background: var(--brand); color: #fff; font-weight: 600; }
+.r3d-steps li.is-active span { border-color: rgba(255, 255, 255, 0.5); }
+
+.r3d-icon { display: grid; place-items: center; width: 38px; height: 38px; flex: none; border-radius: 10px; border: 1px solid var(--line); background: var(--elevated); color: var(--ink); cursor: pointer; box-shadow: 0 4px 16px rgba(20, 30, 25, 0.14); }
+.r3d-icon:hover { border-color: var(--muted); }
+.r3d-icon svg { transition: transform 120ms ease-out; }
+
+.r3d-panel { position: absolute; top: 64px; right: 12px; bottom: 76px; width: 288px; overflow-y: auto; background: var(--elevated); border: 1px solid var(--line); border-radius: 12px; padding: 14px; box-shadow: 0 6px 24px rgba(20, 30, 25, 0.16); user-select: text; }
+.r3d-panel h2 { margin: 0 0 10px; font-family: var(--font-display, Georgia, serif); font-size: 18px; font-weight: 600; }
+.r3d-panel h3 { margin: 16px 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.r3d-field { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.r3d-field > span:first-child { font-weight: 600; }
+.r3d-field select { font: inherit; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-width: 132px; }
+.r3d-number { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding-right: 8px; }
+.r3d-number input { width: 74px; border: 0; background: transparent; font: inherit; color: var(--ink); padding: 6px 4px 6px 8px; text-align: right; font-variant-numeric: tabular-nums; }
+.r3d-number em { font-style: normal; color: var(--muted); min-width: 16px; }
+.r3d-note { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+.r3d-button { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-weight: 600; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); padding: 6px 10px; margin-bottom: 10px; cursor: pointer; }
+.r3d-button:hover { background: var(--accent-soft); }
+.r3d-button.is-danger { color: var(--danger); margin: 14px 0 0; }
+.r3d-button:disabled, .r3d-tools button:disabled { opacity: 0.45; cursor: default; }
+.r3d-sides { width: 100%; background: var(--bg); border-radius: 8px; margin-bottom: 10px; }
+.r3d-sides polygon { fill: #fff; stroke: none; }
+.r3d-sides line { stroke: var(--muted); stroke-width: 1.5; }
+.r3d-sides line.is-eave { stroke: var(--brand); stroke-width: 3; }
+.r3d-sides text { font-size: 12px; font-weight: 600; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.r3d-sides text.is-length { font-weight: 400; fill: var(--muted); font-size: 11px; }
+.r3d-sides text.is-north { fill: var(--accent); }
+.r3d-facts { display: flex; gap: 18px; margin: 0 0 8px; }
+.r3d-facts dt { font-size: 12px; color: var(--muted); }
+.r3d-facts dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.r3d-faces { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.r3d-faces li { display: grid; grid-template-columns: 1fr auto 72px; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.r3d-faces li span:last-child { text-align: right; }
+.r3d-faces li span:nth-child(2) { color: var(--muted); }
+
+.r3d-corner { position: absolute; left: 12px; bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.r3d-toggle { display: flex; padding: 3px; border-radius: 10px; border: 1px solid var(--line); background: var(--elevated); box-shadow: 0 4px 16px rgba(20, 30, 25, 0.14); }
+.r3d-toggle button { font: inherit; font-weight: 600; border: 0; background: transparent; color: var(--muted); padding: 6px 10px; border-radius: 7px; cursor: pointer; }
+.r3d-toggle button.is-on { background: var(--brand); color: #fff; }
+.r3d-credit { max-width: 280px; font-size: 11px; line-height: 1.25; color: var(--ink); background: rgba(255, 253, 248, 0.82); border-radius: 6px; padding: 3px 7px; }
+
+.r3d-dock { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: calc(100% - 24px); pointer-events: none; }
+.r3d-dock > * { pointer-events: auto; }
+.r3d-hint { margin: 0; padding: 6px 12px; border-radius: 8px; background: var(--ink); color: #fffdf8; font-size: 13px; text-align: center; max-width: 520px; }
+.r3d-tools { display: flex; align-items: center; gap: 4px; padding: 5px; border-radius: 12px; border: 1px solid var(--line); background: var(--elevated); box-shadow: 0 6px 24px rgba(20, 30, 25, 0.18); }
+.r3d-tools button { display: inline-flex; align-items: center; gap: 6px; height: 36px; min-width: 36px; justify-content: center; padding: 0 9px; font: inherit; font-weight: 600; border: 0; border-radius: 8px; background: transparent; color: var(--ink); cursor: pointer; white-space: nowrap; }
+.r3d-tools button:hover:not(:disabled) { background: var(--accent-soft); }
+.r3d-tools button.is-on { background: var(--brand); color: #fff; }
+.r3d-tools button.is-primary { background: var(--accent); color: #fff; }
+.r3d-tools i { width: 1px; height: 22px; background: var(--line); margin: 0 3px; }
+.r3d :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 820px) {
+  .r3d-steps { display: none; }
+  .r3d-panel { top: auto; left: 12px; right: 12px; width: auto; bottom: 120px; max-height: 42%; }
+  .r3d-corner { bottom: 66px; }
+  .r3d-credit { display: none; }
+  .r3d-tools button span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .r3d-icon svg { transition: none; } }

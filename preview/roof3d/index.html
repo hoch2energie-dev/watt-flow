@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D-Planung Vorschau</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Farben und Schriften wie in app/globals.css. Die Vorschau bleibt bewusst hell, wie das Programm. */
+:root {
+  --bg: #f3efe6; --elevated: #fffdf8; --ink: #1c2622; --muted: #5c6b64; --line: #e4d9c8;
+  --brand: #1e5c42; --brand-strong: #143f2e; --accent: #c65b2e; --accent-soft: #f8e7dc; --danger: #9d2c2c;
+  --font-sans: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Fraunces", Georgia, serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); }
+</style>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="root"></div>
+<script src="app.js"></script>
+</body>
+</html>
