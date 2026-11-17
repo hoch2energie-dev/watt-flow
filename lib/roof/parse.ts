@@ -25,6 +25,7 @@ export function parseRoofGeometry(value: unknown): RoofGeometry | null {
 }
 
 const ROOF_TYPES = ["sattel", "walm", "flach"] as const;
+const OBSTACLE_KINDS = ["sperrzone", "kamin", "fenster"] as const;
 
 function parseBuilding(value: unknown): StoredBuilding | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -78,7 +79,15 @@ function parseObstacle(value: unknown): RoofObstacle | null {
   const id = typeof raw.id === "string" ? raw.id.slice(0, 80) : "";
   const height = Number(raw.heightM);
   if (!id || !ring || ring.length < 3 || !Number.isFinite(height)) return null;
-  return { id, ring, heightM: Math.max(0, Math.min(80, height)) };
+  const kind = OBSTACLE_KINDS.find((entry) => entry === raw.kind);
+  const margin = Number(raw.marginM);
+  return {
+    id,
+    ring,
+    heightM: Math.max(0, Math.min(80, height)),
+    ...(kind ? { kind } : {}),
+    ...(Number.isFinite(margin) && margin > 0 ? { marginM: Math.min(2, margin) } : {}),
+  };
 }
 
 function parsePlacement(value: unknown): ModulePlacement | null {

@@ -8,6 +8,10 @@ export type RoofObstacle = {
   id: string;
   ring: LngLat[];
   heightM: number;
+  /** Aus der 3D-Planung. Ohne Angabe gilt das Hindernis als Sperrzone. */
+  kind?: "sperrzone" | "kamin" | "fenster";
+  /** Zusätzlicher Abstand, den Module halten, in Metern. */
+  marginM?: number;
 };
 
 export type ModulePlacement = {

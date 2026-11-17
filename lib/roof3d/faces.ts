@@ -1,7 +1,8 @@
 import { DEFAULT_SYSTEM_LOSSES, type RoofFaceInput } from "@/lib/pvgis/types";
-import { toLngLat, toLocal, type LngLat } from "@/lib/roof/geo";
-import { blankGeometry, type StoredBuilding } from "@/lib/roof/types";
-import { buildRoof, normalizeBuilding, windName, type BuildingSpec, type RoofType } from "@/lib/roof3d/building";
+import { centroidLngLat, centroidXY, toLngLat, toLocal, type LngLat, type XY } from "@/lib/roof/geo";
+import { blankGeometry, layoutKwp, type PlannedModule, type RoofGeometry, type RoofObstacle, type StoredBuilding } from "@/lib/roof/types";
+import { buildRoof, normalizeBuilding, windName, type BuildingSpec, type RoofFace3D, type RoofType } from "@/lib/roof3d/building";
+import { faceFrame, obstacleRing, sealPlan, type FacePlan, type ObstacleSpec, type PlanModule } from "@/lib/roof3d/plans";
 
 /**
  * Brücke zwischen der 3D-Planung und den Dachflächen des Angebots.
@@ -31,7 +32,54 @@ export function buildingsFromFaces(faces: RoofFaceInput[], origin: LngLat): Buil
       }),
     );
   }
-  return [...found.values()];
+  return [...found.values()].map((base) => {
+    const model = buildRoof(base);
+    const plans: Record<number, FacePlan> = {};
+    for (const face of faces) {
+      const geometry = face.geometry;
+      const built = geometry?.building?.id === base.id ? model.faces.find((entry) => entry.edge === geometry.building?.edge) : undefined;
+      if (!geometry || !built) continue;
+      if (geometry.obstacles.length === 0 && !geometry.placement && geometry.modules.length === 0) continue;
+      const faceOrigin = centroidLngLat(geometry.ring);
+      plans[built.edge] = sealPlan(base, built.edge, {
+        obstacles: geometry.obstacles.map((obstacle) => obstacleFromStored(base, built, obstacle, origin)),
+        placement: geometry.placement,
+        modules: geometry.modules.map(
+          (panel): PlanModule => ({
+            corners: panel.corners.map((corner) => toLocal(toLngLat(corner, faceOrigin), origin)) as PlanModule["corners"],
+            active: panel.active,
+          }),
+        ),
+      });
+    }
+    return Object.keys(plans).length > 0 ? { ...base, plans } : base;
+  });
+}
+
+/** Ein gespeichertes Hindernis wird zum Rechteck entlang der Traufe, wenn es eines ist, sonst bleibt seine Form. */
+function obstacleFromStored(spec: BuildingSpec, face: RoofFace3D, stored: RoofObstacle, origin: LngLat): ObstacleSpec {
+  const ring = stored.ring.map((point) => toLocal(point, origin));
+  const center = centroidXY(ring);
+  const frame = faceFrame(spec, face);
+  const base = { id: stored.id, kind: stored.kind ?? "sperrzone", center, heightM: stored.heightM, marginM: stored.marginM ?? 0 } as const;
+  const edge = (index: number): XY => [ring[(index + 1) % ring.length][0] - ring[index][0], ring[(index + 1) % ring.length][1] - ring[index][1]];
+  if (ring.length === 4) {
+    const first = edge(0);
+    const second = edge(1);
+    const width = Math.hypot(first[0], first[1]);
+    const depth = Math.hypot(second[0], second[1]);
+    const parallel = Math.abs(first[0] * frame.along[1] - first[1] * frame.along[0]) < 0.02 * width;
+    const square = Math.abs(first[0] * second[0] + first[1] * second[1]) < 0.02 * width * depth;
+    if (width > 0.05 && depth > 0.05 && parallel && square) return { ...base, widthM: width, lengthM: depth / frame.cos };
+  }
+  const xs = ring.map((point) => point[0]);
+  const ys = ring.map((point) => point[1]);
+  return {
+    ...base,
+    widthM: Math.max(...xs) - Math.min(...xs),
+    lengthM: Math.max(...ys) - Math.min(...ys),
+    shape: ring.map((point): XY => [point[0] - center[0], point[1] - center[1]]),
+  };
 }
 
 /**
@@ -65,15 +113,40 @@ export function facesFromBuildings(buildings: BuildingSpec[], origin: LngLat, pr
       const id = before?.id ?? faceId(variantId, spec.id, face.edge);
       const kept = before?.geometry && sameRing(before.geometry.ring, ring) ? before : null;
       const building: StoredBuilding = { ...stored, edge: face.edge };
+      const plan = spec.plans?.[face.edge];
+      let geometry: RoofGeometry = kept?.geometry ? { ...kept.geometry, building } : { ...blankGeometry(ring), building };
+      if (plan) {
+        /* Die Planung führt Aufbauten und Module selbst. Modulecken stehen wie überall relativ zum Schwerpunkt der Fläche. */
+        const frame = faceFrame(spec, face);
+        const faceOrigin = centroidLngLat(ring);
+        geometry = {
+          ...geometry,
+          obstacles: plan.obstacles.map((obstacle) => ({
+            id: obstacle.id,
+            ring: obstacleRing(frame, obstacle).map((point) => toLngLat(point, origin)),
+            heightM: obstacle.heightM,
+            kind: obstacle.kind,
+            ...(obstacle.marginM > 0 ? { marginM: obstacle.marginM } : {}),
+          })),
+          placement: plan.placement,
+          modules: plan.modules.map(
+            (cell): PlannedModule => ({
+              corners: cell.corners.map((corner) => toLocal(toLngLat(corner, origin), faceOrigin)) as PlannedModule["corners"],
+              active: cell.active,
+            }),
+          ),
+        };
+      }
+      const laidOut = plan?.placement && geometry.modules.length > 0 ? layoutKwp(geometry) : null;
       planned.push({
         id,
         name: kept ? kept.name : faceName(number, buildings.length, model.roofType, face.azimuthDeg),
-        kwp: kept ? kept.kwp : 0,
+        kwp: laidOut ?? (kept ? kept.kwp : 0),
         tiltDeg: face.tiltDeg,
         azimuthDeg: face.azimuthDeg,
         mounting: "gebaeude",
         lossesPercent: before?.lossesPercent ?? DEFAULT_SYSTEM_LOSSES,
-        geometry: kept?.geometry ? { ...kept.geometry, building } : { ...blankGeometry(ring), building },
+        geometry,
       });
     }
   });

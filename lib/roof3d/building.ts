@@ -1,4 +1,5 @@
 import { compassOf, polygonArea, signedArea, type XY } from "@/lib/roof/geo";
+import type { FacePlan } from "@/lib/roof3d/plans";
 
 /**
  * Gebäude der 3D-Planung: Umriss plus Dachform ergibt alle Dachflächen.
@@ -22,6 +23,8 @@ export type BuildingSpec = {
   pitchDeg: number[];
   /** Satteldach: First quer statt längs. */
   ridgeSwap: boolean;
+  /** Aufbauten und Module je Dachfläche, nach der Kante der Fläche. */
+  plans?: Record<number, FacePlan>;
 };
 
 export type Point3 = [number, number, number];

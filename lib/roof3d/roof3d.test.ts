@@ -270,3 +270,115 @@ describe("Luftbild", () => {
     expect(aerialSources([11.57, 48.14]).map((source) => source.provider)).toEqual(["esri"]);
   });
 });
+
+import { pointInPolygon } from "@/lib/roof/geo";
+import { centroidLngLat, toLngLat } from "@/lib/roof/geo";
+import { cellAt, emptyPlan, faceFrame, heightOnFace, layoutFace, newObstacle, obstacleRing, planTotals, setCells, syncPlans, updatePlan } from "@/lib/roof3d/plans";
+
+describe("Aufbauten und Modulraster", () => {
+  const placement = { catalogItemId: "k1", powerWp: 450, widthM: 1.134, heightM: 1.762, portrait: true, setbackM: 0.3, gapM: 0.02 };
+  const house = building();
+  const south = buildRoof(house).faces[0];
+  const frame = faceFrame(house, south);
+  const withModules = updatePlan(house, 0, (plan) => ({ ...plan, placement }));
+
+  it("rastert auf der Dachebene: bei 30° passen zwei Reihen hochkant, im Grundriss wäre es nur eine", () => {
+    const cells = layoutFace(frame, south, { obstacles: [], placement });
+    expect(cells).toHaveLength(18);
+    expect(cells.every((cell) => !cell.active)).toBe(true);
+    const first = cells[0].corners;
+    expect(Math.hypot(first[1][0] - first[0][0], first[1][1] - first[0][1])).toBeCloseTo(1.134, 6);
+    expect(Math.hypot(first[3][0] - first[0][0], first[3][1] - first[0][1])).toBeCloseTo(1.762 * Math.cos(30 * DEG), 6);
+    expect(first[0][1]).toBeCloseTo(-4 + 0.3 * Math.cos(30 * DEG), 6);
+    const xs = cells.flatMap((cell) => cell.corners.map((corner) => corner[0]));
+    expect(Math.min(...xs) + Math.max(...xs)).toBeCloseTo(0, 6);
+  });
+
+  it("Querformat und Flachdach", () => {
+    expect(layoutFace(frame, south, { obstacles: [], placement: { ...placement, portrait: false } })).toHaveLength(18);
+    const flat = building({ roofType: "flach" });
+    const face = buildRoof(flat).faces[0];
+    expect(layoutFace(faceFrame(flat, face), face, { obstacles: [], placement })).toHaveLength(9 * 4);
+  });
+
+  it("lässt Plätze unter einem Kamin frei und hält den zusätzlichen Abstand", () => {
+    const chimney = newObstacle("k", "kamin", [0, -2]);
+    const free = layoutFace(frame, south, { obstacles: [chimney], placement });
+    expect(free.length).toBeLessThan(18);
+    expect(free.some((cell) => pointInPolygon([0, -2], cell.corners))).toBe(false);
+    const wide = layoutFace(frame, south, { obstacles: [{ ...chimney, marginM: 1 }], placement });
+    expect(wide.length).toBeLessThan(free.length);
+    const ring = obstacleRing(frame, chimney);
+    expect(Math.hypot(ring[1][0] - ring[0][0], ring[1][1] - ring[0][1])).toBeCloseTo(0.6, 6);
+    expect(Math.hypot(ring[3][0] - ring[0][0], ring[3][1] - ring[0][1])).toBeCloseTo(0.6 * Math.cos(30 * DEG), 6);
+    expect(heightOnFace(frame, [0, -4])).toBeCloseTo(3, 6);
+    expect(heightOnFace(frame, [0, 0])).toBeCloseTo(3 + 4 * Math.tan(30 * DEG), 6);
+  });
+
+  it("belegt Plätze, zählt Leistung und rührt unveränderte Flächen nicht an", () => {
+    expect(withModules.plans?.[0].modules).toHaveLength(18);
+    const some = setCells(withModules, 0, [0, 1, 2], true);
+    expect(planTotals([some])).toEqual({ modules: 3, kwp: 1.35 });
+    expect(planTotals([setCells(some, 0, "all", true)])).toEqual({ modules: 18, kwp: 8.1 });
+    expect(syncPlans(some).plans).toBe(some.plans);
+    const cell = some.plans![0].modules[4];
+    expect(cellAt(some.plans![0], [(cell.corners[0][0] + cell.corners[2][0]) / 2, (cell.corners[0][1] + cell.corners[2][1]) / 2])).toBe(4);
+    expect(cellAt(some.plans![0], [50, 50])).toBe(-1);
+  });
+
+  it("rastert neu, wenn sich etwas ändert, und behält belegte Plätze, die es weiter gibt", () => {
+    const full = setCells(withModules, 0, "all", true);
+    const blocked = updatePlan(full, 0, (plan) => ({ ...plan, obstacles: [newObstacle("k", "kamin", [0, -2])] }));
+    const left = blocked.plans![0].modules;
+    expect(left.length).toBeLessThan(18);
+    expect(left.every((cell) => cell.active)).toBe(true);
+    const steeper = syncPlans({ ...full, pitchDeg: [45, 30, 45, 30] });
+    expect(steeper.plans![0].layoutKey).not.toBe(full.plans![0].layoutKey);
+    const hipped = syncPlans({ ...full, roofType: "walm" });
+    expect(Object.keys(hipped.plans ?? {})).toEqual(["0"]);
+    const turned = syncPlans({ ...full, ridgeSwap: true });
+    expect(Object.keys(turned.plans ?? {})).toEqual([]);
+  });
+
+  it("speichert Module und Aufbauten in die Felder der Dachfläche und lädt sie unverändert zurück", () => {
+    const origin: LngLat = [6.8921, 51.0912];
+    const planned = updatePlan(setCells(withModules, 0, [0, 1, 2, 3, 4], true), 2, () => ({ ...emptyPlan(), obstacles: [{ ...newObstacle("f", "fenster", [1, 2]), marginM: 0.2 }] }));
+    const faces = facesFromBuildings([planned], origin, [], "v1").map((face) => ({ ...face, geometry: parseRoofGeometry(JSON.parse(JSON.stringify(face.geometry))) }));
+    const [southFace, northFace] = faces;
+    expect(southFace.kwp).toBeCloseTo(5 * 0.45, 6);
+    expect(southFace.geometry?.modules.filter((panel) => panel.active)).toHaveLength(5);
+    expect(southFace.geometry?.placement?.catalogItemId).toBe("k1");
+    expect(northFace.kwp).toBe(0);
+    expect(northFace.geometry?.obstacles[0]).toMatchObject({ id: "f", kind: "fenster", marginM: 0.2, heightM: 0 });
+    /* Lesart der übrigen Programmteile: Ecke plus Schwerpunkt der Fläche ergibt den Ort. */
+    const ring = southFace.geometry!.ring;
+    const corner = toLngLat(southFace.geometry!.modules[0].corners[0], centroidLngLat(ring));
+    expect(pointInPolygon(corner, ring)).toBe(true);
+
+    const [loaded] = buildingsFromFaces(faces, origin);
+    expect(loaded.plans?.[0].modules.filter((cell) => cell.active)).toHaveLength(5);
+    expect(syncPlans(loaded).plans).toBe(loaded.plans);
+    const window = loaded.plans![2].obstacles[0];
+    expect([window.kind, window.marginM, window.shape]).toEqual(["fenster", 0.2, undefined]);
+    expect(window.widthM).toBeCloseTo(0.78, 4);
+    expect(window.lengthM).toBeCloseTo(1.18, 4);
+    const again = facesFromBuildings([loaded], origin, faces, "v1");
+    expect(again[0].kwp).toBeCloseTo(southFace.kwp, 6);
+    expect(again[0].geometry?.modules[0].corners[0][0]).toBeCloseTo(southFace.geometry!.modules[0].corners[0][0], 4);
+  });
+
+  it("behält die freie Form eines Hindernisses aus der alten Dachplanung", () => {
+    const origin: LngLat = [6.8921, 51.0912];
+    const [face] = facesFromBuildings([house], origin, [], "v1");
+    const triangle = [[1, -3], [2, -3], [1.5, -2]].map((point) => toLngLat(point as XY, origin));
+    const old = { ...face, geometry: { ...face.geometry!, obstacles: [{ id: "alt", ring: triangle, heightM: 1.5 }] } };
+    const [loaded] = buildingsFromFaces([old], origin);
+    const kept = loaded.plans![0].obstacles[0];
+    expect(kept.shape).toHaveLength(3);
+    const saved = facesFromBuildings([loaded], origin, [old], "v1")[0].geometry!.obstacles[0];
+    saved.ring.forEach((point, index) => {
+      expect(point[0]).toBeCloseTo(triangle[index][0], 7);
+      expect(point[1]).toBeCloseTo(triangle[index][1], 7);
+    });
+  });
+});
