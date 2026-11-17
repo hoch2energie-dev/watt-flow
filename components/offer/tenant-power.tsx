@@ -106,10 +106,10 @@ export function TenantPowerDialog({
       }}
       onClose={onClose}
     >
-      <div className="flex max-h-[calc(100dvh-4rem)] flex-col overflow-hidden rounded-2xl border border-line bg-bg text-ink shadow-2xl">
-        <header className="flex items-start justify-between gap-3 border-b border-line bg-white px-5 py-4">
+      <div className="flex max-h-[calc(100dvh-4rem)] flex-col overflow-hidden rounded-3xl bg-elevated text-ink shadow-2xl">
+        <header className="flex items-start justify-between gap-3 px-6 pb-3 pt-5">
           <div className="min-w-0">
-            <h2 id="tenant-title" className="font-display text-2xl">Mieterstrom</h2>
+            <h2 id="tenant-title" className="title-lg">Mieterstrom</h2>
             {draft && model && !choosing ? (
               <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                 <Badge tone="ok">{model.label}</Badge>
@@ -119,20 +119,20 @@ export function TenantPowerDialog({
               <p className="mt-1 text-sm text-muted">Wie soll der Solarstrom des Gebäudes vermarktet werden?</p>
             )}
           </div>
-          <button type="button" aria-label="Schließen" className="rounded-lg p-2 hover:bg-black/5" onClick={requestClose}>
+          <button type="button" aria-label="Schließen" className="grid size-10 shrink-0 place-items-center rounded-full bg-surface shadow-raise hover:bg-brand-soft" onClick={requestClose}>
             <X size={18} aria-hidden />
           </button>
         </header>
 
         {draft && !choosing ? (
-          <nav aria-label="Bereiche des Mieterstroms" className="flex gap-1 border-b border-line bg-white px-4">
+          <nav aria-label="Bereiche des Mieterstroms" className="mx-6 mb-3 flex gap-1 self-start rounded-full bg-line/80 p-1">
             {(["allgemein", "zusammenfassung"] as const).map((entry) => (
               <button
                 key={entry}
                 type="button"
                 aria-current={tab === entry ? "page" : undefined}
                 onClick={() => setTab(entry)}
-                className={`-mb-px border-b-2 px-3 py-2.5 text-sm ${tab === entry ? "border-brand font-semibold text-brand" : "border-transparent hover:text-brand"}`}
+                className={`h-9 rounded-full px-4 text-sm ${tab === entry ? "bg-surface font-semibold text-ink shadow-raise" : "text-ink hover:bg-surface/60"}`}
               >
                 {entry === "allgemein" ? "Allgemein" : "Zusammenfassung"}
               </button>
@@ -140,7 +140,7 @@ export function TenantPowerDialog({
           </nav>
         ) : null}
 
-        <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-1">
           {!draft || choosing ? (
             <div className="grid gap-3 md:grid-cols-3">
               {TENANT_MODELS.map((entry) => {
@@ -154,9 +154,9 @@ export function TenantPowerDialog({
                     aria-pressed={on}
                     disabled={locked}
                     onClick={() => choose(entry.id)}
-                    className={`flex flex-col rounded-2xl border bg-white p-4 text-left transition hover:border-brand ${on ? "border-brand ring-2 ring-brand/20" : "border-line"}`}
+                    className={`flex flex-col rounded-2xl bg-surface p-4 text-left ring-1 transition hover:ring-brand ${on ? "ring-2 ring-brand" : "ring-black/[0.05]"}`}
                   >
-                    <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800"><Icon size={20} aria-hidden /></span>
+                    <span className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-brand-soft text-brand"><Icon size={20} aria-hidden /></span>
                     <span className="font-semibold">{entry.label}</span>
                     <span className="mt-1 text-sm text-muted">{entry.text}</span>
                   </button>
@@ -173,7 +173,7 @@ export function TenantPowerDialog({
           )}
         </div>
 
-        <footer className="border-t border-line bg-white px-5 py-3">
+        <footer className="border-t border-line px-6 py-3.5">
           {saveError ? <div className="mb-3"><Notice tone="danger">Nicht gespeichert: {saveError}</Notice></div> : null}
           {discard ? (
             <div className="flex flex-wrap items-center justify-end gap-2" role="alert">
@@ -203,7 +203,7 @@ export function TenantPowerDialog({
 
 function Section({ id, title, hint, children }: { id: string; title: string; hint?: string; children: React.ReactNode }) {
   return (
-    <section data-section={id} className="rounded-2xl border border-line bg-white p-4">
+    <section data-section={id} className="rounded-2xl bg-surface p-4 ring-1 ring-black/[0.04]">
       <h3 className="font-semibold">{title}</h3>
       {hint ? <p className="mt-0.5 text-sm text-muted">{hint}</p> : null}
       <div className="mt-3">{children}</div>
@@ -261,14 +261,14 @@ function General({
       >
         {full ? (
           <>
-            <div className="flex flex-wrap gap-2" role="group" aria-label="Tarifart">
+            <div className="inline-flex flex-wrap gap-1 rounded-[1.375rem] bg-line/80 p-1" role="group" aria-label="Tarifart">
               {(["zweitarif", "mischtarif"] as const).map((mode) => (
                 <button
                   key={mode}
                   type="button"
                   data-tariff={mode}
                   aria-pressed={draft.tariffMode === mode}
-                  className={`rounded-full px-3 py-1 text-sm font-semibold ${draft.tariffMode === mode ? "bg-brand text-white" : "bg-bg"}`}
+                  className={`h-9 rounded-full px-4 text-sm ${draft.tariffMode === mode ? "bg-surface font-semibold text-ink shadow-raise" : "text-ink hover:bg-surface/60"}`}
                   onClick={() => set({ tariffMode: mode })}
                 >
                   {TARIFF_LABEL[mode]}
@@ -292,7 +292,7 @@ function General({
           <Field label="Grundpreis € je Monat"><NumberField digits={2} value={draft.baseFeeEur} onChange={(baseFeeEur) => set({ baseFeeEur })} /></Field>
           <Field label="Mehrwertsteuer %" hint="0 bei Kleinunternehmern."><NumberField digits={0} value={draft.vatPct} onChange={(vatPct) => set({ vatPct })} /></Field>
         </div>
-        <p className="mt-3 rounded-xl bg-bg px-3 py-2 text-sm" data-gross>
+        <p className="mt-3 rounded-xl bg-elevated px-3 py-2 text-sm" data-gross>
           Brutto für die Mieter:{" "}
           <strong>
             {mixed ? `${ct(gross.mixedCt)}/kWh` : full ? `${ct(gross.pvCt)} Solarstrom · ${ct(gross.gridCt)} Reststrom` : `${ct(gross.pvCt)}/kWh`}
@@ -417,7 +417,7 @@ function Summary({ config, variant }: { config: TenantPower; variant: { name: st
       {summary.limited ? <Notice>Die Anlage erzeugt weniger, als für {formatNumber(config.pvSharePct, 0)} % Solaranteil nötig wäre. Gerechnet ist mit {formatNumber(summary.sharePct, 1)} %.</Notice> : null}
       {full && config.surchargeCt <= 0 ? <Notice>Der Mieterstromzuschlag ist nicht eingetragen und fehlt in der Rechnung.</Notice> : null}
 
-      <section data-view="betreiber" className="rounded-2xl border border-line bg-white p-4">
+      <section data-view="betreiber" className="rounded-2xl bg-surface p-4 ring-1 ring-black/[0.04]">
         <h3 className="font-semibold">Aus Sicht des Betreibers</h3>
         <p className="mt-0.5 text-sm text-muted">Überschlag für das erste Jahr, netto. Kosten für Messung, Abrechnung und Betrieb sind nicht abgezogen.</p>
         {supplies ? (
@@ -448,7 +448,7 @@ function Summary({ config, variant }: { config: TenantPower; variant: { name: st
       </section>
 
       {supplies ? (
-        <section data-view="mieter" className="rounded-2xl border border-line bg-white p-4">
+        <section data-view="mieter" className="rounded-2xl bg-surface p-4 ring-1 ring-black/[0.04]">
           <h3 className="font-semibold">Aus Sicht der Mieter</h3>
           <p className="mt-0.5 text-sm text-muted">
             Brutto: {mixed ? `${ct(summary.gross.mixedCt)}/kWh` : full ? `${ct(summary.gross.pvCt)} Solarstrom, ${ct(summary.gross.gridCt)} Reststrom, im Schnitt ${ct(summary.gross.effectiveCt)}/kWh` : `${ct(summary.gross.pvCt)}/kWh Solarstrom, Reststrom weiter über den bisherigen Vertrag`}
@@ -457,7 +457,7 @@ function Summary({ config, variant }: { config: TenantPower; variant: { name: st
           <div className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[34rem] text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-muted">
+                <tr className="text-left text-xs font-medium text-muted">
                   <th className="py-1.5 pr-3 font-semibold">Mietergruppe</th>
                   <th className="py-1.5 pr-3 text-right font-semibold">Bisher pro Jahr</th>
                   <th className="py-1.5 pr-3 text-right font-semibold">Mit Mieterstrom</th>

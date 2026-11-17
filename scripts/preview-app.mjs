@@ -3,10 +3,11 @@
 // Aufruf: node scripts/preview-app.mjs
 import tailwind from "@tailwindcss/postcss";
 import { build } from "esbuild";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postcss from "postcss";
+import { writePageWithFont } from "./preview-font.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "preview/app/dist");
@@ -46,4 +47,4 @@ await build({
 const source = path.join(root, "app/globals.css");
 const css = await postcss([tailwind()]).process(await readFile(source, "utf8"), { from: source });
 await writeFile(path.join(out, "tailwind.css"), css.css);
-await copyFile(path.join(root, "preview/app/index.html"), path.join(out, "index.html"));
+await writePageWithFont(root, path.join(root, "preview/app/index.html"), path.join(out, "index.html"));

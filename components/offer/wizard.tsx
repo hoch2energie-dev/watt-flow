@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown } from "lucide-react";
+import { ArrowLeft, ChevronDown, Plus } from "lucide-react";
 import { deleteOffer, moveOffer, saveOffer, setOfferStatus, unlockOffer } from "@/app/actions/offers";
 import { locateAddress } from "@/app/actions/roof";
 import { Field, NumberField, SelectInput, TextArea, TextInput } from "@/components/fields";
@@ -170,23 +170,25 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
 
   /** Varianten wählen. Mit `manage` auch anlegen, kopieren, umbenennen, löschen. */
   const variantBar = (manage: boolean) => (
-    <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Varianten">
-      {offer.variants.map((entry) => (
-        <button
-          key={entry.id}
-          type="button"
-          aria-pressed={entry.id === variant.id}
-          onClick={() => setVariantId(entry.id)}
-          className={`rounded-full border px-3 py-1 text-sm font-semibold ${entry.id === variant.id ? "border-brand bg-white text-brand" : "border-transparent bg-white/60 text-ink hover:bg-white"}`}
-        >
-          {entry.name}{entry.recommended ? " · empfohlen" : ""}
-        </button>
-      ))}
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-2" role="group" aria-label="Varianten">
+      <div className="flex flex-wrap gap-1 rounded-[1.375rem] bg-line/80 p-1">
+        {offer.variants.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            aria-pressed={entry.id === variant.id}
+            onClick={() => setVariantId(entry.id)}
+            className={`h-9 rounded-full px-4 text-sm ${entry.id === variant.id ? "bg-surface font-semibold text-ink shadow-raise" : "text-ink hover:bg-surface/60"}`}
+          >
+            {entry.name}{entry.recommended ? " · empfohlen" : ""}
+          </button>
+        ))}
+      </div>
       {manage && !meta.locked ? (
         <>
-          <button type="button" className="rounded-full bg-white/60 px-3 py-1 text-sm font-semibold text-brand hover:bg-white" onClick={() => addVariant(false)}>+ Neue Variante</button>
-          <button type="button" className="text-sm font-semibold text-brand" onClick={() => addVariant(true)}>Kopie</button>
-          <button type="button" className="text-sm font-semibold text-brand" aria-expanded={editVariant} onClick={() => setEditVariant((open) => !open)}>Variante bearbeiten</button>
+          <button type="button" className="inline-flex h-9 items-center gap-1.5 rounded-full bg-surface px-4 text-sm font-semibold shadow-raise hover:bg-brand-soft" onClick={() => addVariant(false)}><Plus size={15} aria-hidden /> Neue Variante</button>
+          <button type="button" className="h-9 rounded-full px-3 text-sm font-semibold text-brand hover:bg-surface/70" onClick={() => addVariant(true)}>Kopie</button>
+          <button type="button" className="h-9 rounded-full px-3 text-sm font-semibold text-brand hover:bg-surface/70" aria-expanded={editVariant} onClick={() => setEditVariant((open) => !open)}>Variante bearbeiten</button>
         </>
       ) : null}
     </div>
@@ -194,22 +196,23 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
 
   return (
     <div className="min-w-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">{offer.number}</p>
-          <input aria-label="Angebotsname" className="mt-1 w-full max-w-xl bg-transparent outline-none" style={{ fontFamily: "var(--font-display)", fontSize: "1.875rem", lineHeight: 1.2 }} value={offer.title} disabled={meta.locked} onChange={(event) => patchOffer({ title: event.target.value })} />
-          <p className="text-sm text-muted">{meta.customerName}{meta.siteAddress ? ` · ${meta.siteAddress}` : ""}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="page-head">
+        <p className="text-sm text-muted">Angebot {offer.number} für {meta.customerName}{meta.siteAddress ? `, ${meta.siteAddress}` : ""}</p>
+        <input aria-label="Angebotsname" className="title-xl -ml-1 mt-0.5 w-full rounded-lg bg-transparent px-1" value={offer.title} disabled={meta.locked} onChange={(event) => patchOffer({ title: event.target.value })} />
+      </div>
+
+      <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-3">
+        <OfferTabs active={tab} onChange={show} request={{ href: `/anfragen/${meta.requestId}`, number: meta.requestNumber }} />
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <Badge tone={offer.status === "ANGENOMMEN" ? "ok" : "info"}>{OFFER_STATUS_LABEL[offer.status]}</Badge>
-          <select aria-label="Spalte im Board" className="field" style={{ width: "auto", maxWidth: "14rem" }} value={offer.stageId ?? ""} onChange={(event) => { patchOffer({ stageId: event.target.value }); void moveOffer(offer.id, event.target.value); }}>
+          <select aria-label="Spalte im Board" className="field is-pill" value={offer.stageId ?? ""} onChange={(event) => { patchOffer({ stageId: event.target.value }); void moveOffer(offer.id, event.target.value); }}>
             {meta.stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.name}</option>)}
           </select>
           <details ref={actions} className="relative" onToggle={() => setDeleteArmed(false)}>
-            <summary className="flex cursor-pointer list-none items-center gap-1 rounded-xl border border-line bg-white px-3 py-2 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+            <summary className="flex h-[2.625rem] cursor-pointer list-none items-center gap-1.5 rounded-full bg-surface px-4 text-sm font-semibold shadow-raise hover:bg-brand-soft [&::-webkit-details-marker]:hidden">
               Aktionen <ChevronDown size={15} aria-hidden />
             </summary>
-            <div className="absolute right-0 z-20 mt-1 flex w-60 flex-col rounded-xl border border-line bg-white p-1 text-sm shadow-lg">
+            <div className="absolute right-0 z-30 mt-2 flex w-64 flex-col rounded-2xl bg-surface p-1.5 text-sm shadow-xl ring-1 ring-black/5">
               <MenuItem onClick={() => { actions.current?.removeAttribute("open"); void openPdf(); }}>PDF öffnen</MenuItem>
               {offer.status !== "ANGENOMMEN" ? (
                 <>
@@ -229,11 +232,10 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
       {meta.locked ? <div className="mt-3"><Notice tone="ok">Dieses Angebot ist angenommen und gesperrt. {meta.isAdmin ? "Die Administration kann die Sperre unter Aktionen aufheben." : ""}</Notice></div> : null}
       {error ? <div className="mt-3"><Notice tone="danger">{error}</Notice></div> : null}
 
-      <OfferTabs active={tab} onChange={show} request={{ href: `/anfragen/${meta.requestId}`, number: meta.requestNumber }} />
       <FigureStrip result={result} variantName={variant.name} />
 
       {tab === "allgemein" ? (
-        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <Card title="Kunde">
             <dl className="space-y-1 text-sm">
               <Row label="Name">{meta.customerName}</Row>
@@ -262,9 +264,9 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
               {meta.mapsKey ? <Button type="button" size="sm" variant="secondary" onClick={() => setMapOpen(true)}>Auf der Karte prüfen</Button> : null}
             </div>
           </Card>
-          <fieldset disabled={meta.locked} className="rounded-2xl border border-line bg-elevated p-4 disabled:opacity-80 sm:p-5 lg:col-span-2">
+          <fieldset disabled={meta.locked} className={`${SHEET} disabled:opacity-80 lg:col-span-2`}>
             <legend className="sr-only">Gebäude</legend>
-            <h2 className="mb-3 font-display text-xl">Gebäude</h2>
+            <h2 className="title-md mb-4">Gebäude</h2>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="Gebäudetyp"><SelectInput value={offer.buildingType} onChange={(event) => patchOffer({ buildingType: event.target.value })}>{BUILDING_TYPES.map((item) => <option key={item}>{item}</option>)}<option value="">–</option></SelectInput></Field>
               <Field label="Baujahr"><NumberField digits={0} value={offer.buildingYear ?? 0} onChange={(value) => patchOffer({ buildingYear: value > 0 ? Math.round(value) : null })} /></Field>
@@ -285,7 +287,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
         <>
           <PlanningHub offer={offer} variant={variant} result={result} locked={meta.locked} variantBar={variantBar(true)} onOpen={(next) => { setTopic(next); window.scrollTo({ top: 0 }); }} onPlan={() => void openPlanner()} onTenant={(next) => { setError(null); setTenantTab(next); }} />
           {editVariant && !meta.locked ? (
-            <div className="mt-4 flex flex-wrap items-end gap-4 rounded-2xl border border-line bg-elevated p-4">
+            <div className={`mt-4 flex flex-wrap items-end gap-4 ${SHEET}`}>
               <Field label="Variantenname">
                 <TextInput value={variant.name} onChange={(event) => patchVariant({ name: event.target.value })} />
               </Field>
@@ -301,15 +303,15 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
       ) : null}
 
       {tab === "planung" && topic ? (
-        <section aria-labelledby="topic-title" className="mt-5">
-          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-            <button type="button" className="inline-flex items-center gap-1 text-sm font-semibold text-brand" onClick={() => setTopic(null)}>
+        <section aria-labelledby="topic-title" className="mt-4">
+          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <button type="button" className="inline-flex h-9 items-center gap-1.5 rounded-full bg-surface px-4 text-sm font-semibold shadow-raise hover:bg-brand-soft" onClick={() => setTopic(null)}>
               <ArrowLeft size={16} aria-hidden /> Zurück zur Planung
             </button>
-            <h2 id="topic-title" className="font-display text-2xl">{TOPIC_LABEL[topic]}</h2>
+            <h2 id="topic-title" className="title-lg">{TOPIC_LABEL[topic]}</h2>
             {isPlanTopic(topic) ? <span className="text-sm text-muted">Variante {variant.name}</span> : null}
           </div>
-          <fieldset disabled={meta.locked} className="rounded-2xl border border-line bg-elevated p-4 disabled:opacity-80 sm:p-5">
+          <fieldset disabled={meta.locked} className={`${SHEET} disabled:opacity-80`}>
             <legend className="sr-only">{TOPIC_LABEL[topic]}</legend>
 
             {topic === "strom" ? (
@@ -347,7 +349,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
 
             {topic === "pv" ? (
               <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-surface p-4">
                   <p className="text-sm">Dach, Aufbauten und Module planen Sie in der 3D-Planung. Hier stehen Preise, Dachflächen und Ertrag.</p>
                   <Button type="button" size="sm" onClick={() => void openPlanner()}>Zur 3D-Planung</Button>
                 </div>
@@ -392,14 +394,14 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
       ) : null}
 
       {tab === "simulation" ? (
-        <div className="mt-5 space-y-4">
+        <div className="mt-4 space-y-4">
           {variantBar(false)}
           {variant.lines.some((line) => line.section === "heatpump" && line.quantity > 0) && offer.heatPumpElectricKwh <= 0 ? <Notice>Es ist eine Wärmepumpe angeboten, aber kein Wärmepumpenstrom im Themenbereich Wärme eingetragen.</Notice> : null}
           {result.kwp <= 0 ? <Notice>Es ist noch keine Anlagengröße geplant. Die Wirtschaftlichkeit erscheint, sobald Module stehen.</Notice> : null}
           <fieldset disabled={meta.locked} className="disabled:opacity-80">
             <legend className="sr-only">Annahmen der Wirtschaftlichkeit</legend>
-            <details className="rounded-xl bg-elevated p-3 text-sm">
-              <summary className="cursor-pointer font-semibold">Annahmen</summary>
+            <details className={`${SHEET} text-sm`}>
+              <summary className="title-md cursor-pointer">Annahmen</summary>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <Field label="EEG-Vergütung €/kWh, 20 Jahre"><NumberField digits={4} value={variant.eegTariffEur} onChange={(eegTariffEur) => patchVariant({ eegTariffEur })} /></Field>
                 <Field label="Vergütung danach €/kWh"><NumberField digits={4} value={variant.postEegTariffEur} onChange={(postEegTariffEur) => patchVariant({ postEegTariffEur })} /></Field>
@@ -415,11 +417,11 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
       ) : null}
 
       {tab === "abschluss" ? (
-        <div className="mt-5 space-y-4">
+        <div className="mt-4 space-y-4">
           {variantBar(false)}
-          <fieldset disabled={meta.locked} className="rounded-2xl border border-line bg-elevated p-4 disabled:opacity-80 sm:p-5">
+          <fieldset disabled={meta.locked} className={`${SHEET} disabled:opacity-80`}>
             <legend className="sr-only">Zahlung</legend>
-            <h2 className="mb-3 font-display text-xl">Zahlung</h2>
+            <h2 className="title-md mb-4">Zahlung</h2>
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={offer.vatZeroEligible} onChange={(event) => patchOffer({ vatZeroEligible: event.target.checked })} /> Nullsteuersatz § 12 Abs. 3 UStG für PV-Positionen anwenden</label>
@@ -429,9 +431,9 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
                 <Field label="Gültig bis"><TextInput type="date" value={offer.validUntil ?? ""} onChange={(event) => patchOffer({ validUntil: event.target.value || null })} /></Field>
                 <Field label="Rabatt netto"><NumberField value={variant.rebateNet} onChange={(rebateNet) => patchVariant({ rebateNet })} /></Field>
               </div>
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Zahlungsart">
+              <div className="inline-flex flex-wrap gap-1 rounded-[1.375rem] bg-line/80 p-1" role="group" aria-label="Zahlungsart">
                 {(["BAR", "FINANZIERUNG", "RATEN"] as const).map((mode) => (
-                  <button key={mode} type="button" aria-pressed={variant.paymentMode === mode} className={`rounded-full px-3 py-1 text-sm font-semibold ${variant.paymentMode === mode ? "bg-brand text-white" : "bg-white"}`} onClick={() => patchVariant({ paymentMode: mode })}>{PAYMENT_LABEL[mode]}</button>
+                  <button key={mode} type="button" aria-pressed={variant.paymentMode === mode} className={`h-9 rounded-full px-4 text-sm ${variant.paymentMode === mode ? "bg-surface font-semibold text-ink shadow-raise" : "text-ink hover:bg-surface/60"}`} onClick={() => patchVariant({ paymentMode: mode })}>{PAYMENT_LABEL[mode]}</button>
                 ))}
               </div>
               {variant.paymentMode !== "BAR" ? (
@@ -451,7 +453,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
                   )}
                 </div>
               ) : null}
-              <div className="rounded-xl bg-bg p-3 text-sm">
+              <div className="rounded-2xl bg-surface p-4 text-sm tabular-nums">
                 <p>Netto {formatEuro(result.pricing.net)} · Steuer {formatEuro(result.pricing.vat)} · Brutto {formatEuro(result.pricing.gross)}</p>
                 <p>Kunde zahlt {formatEuro(result.financing.customerPays)}{result.financing.mode !== "BAR" ? ` · Rate ${formatEuro(result.financing.payment)}` : ""}</p>
                 <p>Deckungsbeitrag {formatEuro(result.pricing.margin)} · {formatPercent(result.pricing.marginPercent)}</p>
@@ -472,7 +474,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
             </div>
           </Card>
           {offer.status !== "ANGENOMMEN" ? (
-            <form action="/api/attachments" method="post" encType="multipart/form-data" className="flex flex-wrap items-center gap-2 rounded-2xl border border-dashed border-line p-4">
+            <form action="/api/attachments" method="post" encType="multipart/form-data" className="flex flex-wrap items-center gap-3 rounded-3xl border border-dashed border-[#c3cac6] p-5">
               <input type="hidden" name="offerId" value={offer.id} />
               <input type="hidden" name="kind" value="signatur" />
               <p className="text-sm">Unterschriebenes PDF hochladen und als angenommen markieren.</p>
@@ -501,9 +503,9 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
         />
       ) : null}
 
-      <div className="sticky bottom-3 z-10 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
-        <div className="text-sm">
-          <strong>{formatEuro(result.investment)}</strong>
+      <div className="sticky bottom-3 z-10 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-[1.875rem] bg-surface/95 py-2.5 pl-6 pr-2.5 shadow-xl ring-1 ring-black/5 backdrop-blur">
+        <div className="text-sm tabular-nums">
+          <strong className="text-base font-semibold">{formatEuro(result.investment)}</strong>
           <span className="text-muted"> · Marge {formatEuro(result.pricing.margin)}</span>
           {message && offer === savedOffer ? <span className="ml-2 text-ok" role="status">{message}</span> : null}
         </div>
@@ -522,10 +524,13 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
   );
 }
 
+/** Große Fläche für einen Abschnitt der Angebotsseite. */
+const SHEET = "rounded-3xl bg-elevated p-5 shadow-panel sm:p-6";
+
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-line bg-white p-4 sm:p-5">
-      <h2 className="mb-3 font-display text-xl">{title}</h2>
+    <section className={SHEET}>
+      <h2 className="title-md mb-4">{title}</h2>
       {children}
     </section>
   );
@@ -542,7 +547,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 function MenuItem({ danger = false, onClick, children }: { danger?: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className={`rounded-lg px-3 py-2 text-left hover:bg-bg ${danger ? "text-danger" : "text-ink"}`}>
+    <button type="button" onClick={onClick} className={`rounded-xl px-3 py-2.5 text-left hover:bg-elevated ${danger ? "text-danger" : "text-ink"}`}>
       {children}
     </button>
   );

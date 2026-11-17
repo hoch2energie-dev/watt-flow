@@ -80,7 +80,7 @@ export function YieldPanel({
   const max = Math.max(...(variant.yieldMonthlyKwh ?? [1]), 1);
 
   return (
-    <div className="space-y-3 rounded-2xl border border-line bg-white p-3">
+    <div className="space-y-3 rounded-2xl bg-surface p-4 ring-1 ring-black/[0.04]">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h3 className="font-semibold">Dachflächen und PVGIS</h3>
@@ -107,7 +107,7 @@ export function YieldPanel({
       {offer.locationLabel ? <p className="text-xs text-muted">Gefunden: {offer.locationLabel}</p> : <p className="text-xs text-muted">Objektadresse: {address || "keine hinterlegt"}</p>}
       <div className="space-y-2">
         {faces.map((face, index) => (
-          <div key={face.id} className="grid gap-2 rounded-xl bg-bg p-2 md:grid-cols-6">
+          <div key={face.id} className="grid gap-2 rounded-2xl bg-elevated p-2 md:grid-cols-6">
             <TextInput aria-label="Name der Fläche" value={face.name} onChange={(event) => patchFace(face.id, { name: event.target.value })} />
             <NumberField ariaLabel="Leistung kWp" digits={2} value={face.kwp} onChange={(kwp) => patchFace(face.id, { kwp })} />
             <NumberField ariaLabel="Neigung" digits={0} value={face.tiltDeg} onChange={(tiltDeg) => patchFace(face.id, { tiltDeg })} />
@@ -136,10 +136,12 @@ export function YieldPanel({
       {variant.yieldProvider === "pvgis" && variant.yieldMonthlyKwh ? (
         <div>
           <p className="text-sm">PVGIS: {formatNumber(variant.yieldAnnualKwh ?? 0, 0)} kWh/Jahr, {formatNumber(variant.specificYield, 0)} kWh/kWp.</p>
-          <div className="mt-2 flex h-24 items-end gap-1">
+          <div className="mt-2 flex h-24 gap-1">
             {variant.yieldMonthlyKwh.map((value, index) => (
-              <div key={MONTHS[index]} className="flex flex-1 flex-col items-center justify-end">
-                <div className="w-full rounded-t bg-brand" style={{ height: `${Math.max(4, (value / max) * 100)}%` }} title={`${formatNumber(value, 0)} kWh`} />
+              <div key={MONTHS[index]} className="flex h-full flex-1 flex-col items-center gap-1">
+                <div className="flex w-full flex-1 items-end">
+                  <div className="w-full rounded-t-md bg-brand" style={{ height: `${Math.max(4, (value / max) * 100)}%` }} title={`${formatNumber(value, 0)} kWh`} />
+                </div>
                 <span className="text-[10px] text-muted">{MONTHS[index]}</span>
               </div>
             ))}

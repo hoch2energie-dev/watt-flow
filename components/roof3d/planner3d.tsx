@@ -564,7 +564,7 @@ export function Planner3D({ title, subtitle, initial, initialWiring = NO_WIRING,
       ) : step === "gebaeude" && selected && obstacle && face ? (
         <ObstaclePanel obstacle={obstacle} locked={locked} onChange={changeObstacle} onRemove={removeSelected} />
       ) : step === "gebaeude" && selected && model ? (
-        <aside className="r3d-panel" aria-label="Eigenschaften des Dachs">
+        <SidePanel label="Eigenschaften des Dachs">
           <h2>Dach</h2>
           <label className="r3d-field">
             <span>Dachform</span>
@@ -624,7 +624,7 @@ export function Planner3D({ title, subtitle, initial, initialWiring = NO_WIRING,
           <button type="button" className="r3d-button is-danger" disabled={locked} onClick={removeSelected}>
             <Trash2 size={15} /> Dach löschen
           </button>
-        </aside>
+        </SidePanel>
       ) : null}
 
       <div className="r3d-corner">
@@ -688,7 +688,7 @@ function ModulePanel({ face, plan, options, suggestion, locked, flatRoof, onPlan
     );
   };
   return (
-    <aside className="r3d-panel" aria-label="Module auf der Dachfläche">
+    <SidePanel label="Module auf der Dachfläche">
       <h2>{flatRoof ? "Flachdach" : `Dachseite ${windName(face.azimuthDeg)}`}</h2>
       <p className="r3d-note">{flatRoof ? "Flach, Module liegen ohne Aufständerung." : `Neigung ${numberText(face.tiltDeg, 0)}°, Ausrichtung ${numberText(face.azimuthDeg, 0)}°`} · {numberText(face.areaM2)} m²</p>
       <label className="r3d-field is-stacked">
@@ -735,6 +735,18 @@ function ModulePanel({ face, plan, options, suggestion, locked, flatRoof, onPlan
           {places === 0 ? <p className="r3d-note">Auf diese Fläche passt so kein Modul. Randabstand verkleinern oder quer legen.</p> : null}
         </>
       ) : null}
+    </SidePanel>
+  );
+}
+
+/**
+ * Fläche rechts mit den Einstellungen des Schritts. Gerollt wird in einem inneren Kasten:
+ * Rollt die runde Fläche selbst, zeichnen manche Browser unter ihr einen Streifen.
+ */
+function SidePanel({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <aside className="r3d-panel" aria-label={label}>
+      <div className="r3d-scroll">{children}</div>
     </aside>
   );
 }
@@ -772,7 +784,7 @@ function StringsPanel({ report, wiring, activeId, faceLabel, faceFree, perString
   const nameOf = (id: string) => wiring.strings.find((entry) => entry.id === id)?.name ?? "?";
   const waiting = wiring.inverters.length > 0 && wiring.strings.some((entry) => (entry.inverter == null || entry.tracker == null) && (report.strings.get(entry.id)?.count ?? 0) > 0);
   return (
-    <aside className="r3d-panel" aria-label="Strings und Wechselrichter">
+    <SidePanel label="Strings und Wechselrichter">
       <h2>Strings</h2>
       <dl className="r3d-facts">
         <div><dt>Module</dt><dd id="r3d-wire-all">{report.modules}</dd></div>
@@ -917,7 +929,7 @@ function StringsPanel({ report, wiring, activeId, faceLabel, faceFree, perString
         </ul>
       )}
       <p className="r3d-note is-below">Gerechnet mit den Datenblattwerten aus dem Katalog bei −10 °C und 70 °C Zelltemperatur. Die Prüfung ersetzt nicht die Auslegung mit dem Werkzeug des Herstellers.</p>
-    </aside>
+    </SidePanel>
   );
 }
 
@@ -953,7 +965,7 @@ function NameRow({ id, value, disabled, onChange }: { id: string; value: string;
 function ObstaclePanel({ obstacle, locked, onChange, onRemove }: { obstacle: ObstacleSpec; locked: boolean; onChange: (patch: Partial<ObstacleSpec>, key: string) => void; onRemove: () => void }) {
   const free = Boolean(obstacle.shape);
   return (
-    <aside className="r3d-panel" aria-label="Eigenschaften des Aufbaus">
+    <SidePanel label="Eigenschaften des Aufbaus">
       <h2>{OBSTACLE_DEFAULTS[obstacle.kind].label}</h2>
       <div className="r3d-kinds" role="group" aria-label="Art des Aufbaus">
         {(Object.keys(OBSTACLE_DEFAULTS) as ObstacleKind[]).map((kind) => (
@@ -976,7 +988,7 @@ function ObstaclePanel({ obstacle, locked, onChange, onRemove }: { obstacle: Obs
       <button type="button" className="r3d-button is-danger" disabled={locked} onClick={onRemove}>
         <Trash2 size={15} /> {OBSTACLE_DEFAULTS[obstacle.kind].label} löschen
       </button>
-    </aside>
+    </SidePanel>
   );
 }
 

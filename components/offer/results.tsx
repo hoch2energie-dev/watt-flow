@@ -23,26 +23,29 @@ export function ResultsView({ result, horizon }: { result: CalcResult; horizon: 
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map(([label, value]) => (
-          <div key={label} className="rounded-2xl border border-line bg-white px-3 py-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</p>
-            <p className="mt-1 font-display text-2xl">{value}</p>
+          <div key={label} className="rounded-2xl bg-elevated px-4 py-3.5 shadow-panel">
+            <p className="text-xs text-muted">{label}</p>
+            <p className="figure mt-1">{value}</p>
           </div>
         ))}
       </div>
-      <div className="rounded-2xl border border-line p-4">
-        <h3 className="font-semibold">Monatlicher Ertrag</h3>
+      <div className="rounded-3xl bg-elevated p-5 shadow-panel sm:p-6">
+        <h3 className="title-md">Monatlicher Ertrag</h3>
         <p className="text-xs text-muted">{result.yield.providerId === "pvgis" ? PVGIS_SOURCE_NOTE : "Typische deutsche Verteilung, skaliert auf den Jahresertrag. Keine standortgenaue Simulation."}</p>
-        <div className="mt-3 flex h-36 items-end gap-1">
+        {/* Die Spalte hat eine feste Höhe, sonst hätte die Prozentangabe des Balkens keinen Bezug und er bliebe unsichtbar. */}
+        <div className="mt-4 flex h-40 gap-1.5">
           {result.yield.monthlyKwh.map((value, index) => (
-            <div key={MONTHS[index]} className="flex flex-1 flex-col items-center justify-end gap-1">
-              <div className="w-full rounded-t bg-brand" style={{ height: `${Math.max(4, (value / max) * 100)}%` }} title={`${formatNumber(value, 0)} kWh`} />
-              <span className="text-[10px] text-muted">{MONTHS[index]}</span>
+            <div key={MONTHS[index]} className="flex h-full flex-1 flex-col items-center gap-1.5">
+              <div className="flex w-full flex-1 items-end">
+                <div className="w-full rounded-t-md bg-brand" style={{ height: `${Math.max(4, (value / max) * 100)}%` }} title={`${formatNumber(value, 0)} kWh`} />
+              </div>
+              <span className="text-[11px] text-muted">{MONTHS[index]}</span>
             </div>
           ))}
         </div>
       </div>
-      <div className="rounded-2xl border border-line p-4 text-sm">
-        <h3 className="font-semibold">Zahlung</h3>
+      <div className="rounded-3xl bg-elevated p-5 text-sm shadow-panel sm:p-6">
+        <h3 className="title-md">Zahlung</h3>
         <p className="mt-1">{PAYMENT_LABEL[result.financing.mode]}: Kunde zahlt {formatEuro(result.financing.customerPays)}.</p>
         {result.financing.mode !== "BAR" ? (
           <p className="mt-1">
@@ -53,10 +56,10 @@ export function ResultsView({ result, horizon }: { result: CalcResult; horizon: 
         ) : null}
         <p className="mt-2 text-xs text-muted">Die Wirtschaftlichkeit rechnet den Kaufpreis. Zinsen einer Finanzierung stehen separat und verlängern die Amortisation.</p>
       </div>
-      <div className="max-h-80 overflow-auto rounded-2xl border border-line">
-        <table className="w-full min-w-[640px] text-sm">
-          <thead className="sticky top-0 bg-elevated">
-            <tr className="text-left text-xs uppercase tracking-wide text-muted">
+      <div className="max-h-80 overflow-auto rounded-3xl bg-surface ring-1 ring-black/[0.04]">
+        <table className="w-full min-w-[640px] text-sm tabular-nums">
+          <thead className="sticky top-0 bg-surface">
+            <tr className="text-left text-xs font-medium text-muted">
               <th className="px-3 py-2">Jahr</th>
               <th className="px-3 py-2">Ertrag</th>
               <th className="px-3 py-2">Eigenverbrauch</th>

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Car, Check, Circle, Flame, Plus, Users, Zap, type LucideIcon } from "lucide-react";
+import { Car, Check, Flame, Plus, Users, Zap, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui";
 import type { CalcResult } from "@/lib/calc/offer";
 import type { OfferDTO, VariantDTO } from "@/lib/domain";
@@ -8,10 +8,13 @@ import { PLAN_TOPICS, THEMES, TOPIC_LABEL, baselineTiles, planSummary, solarProg
 
 const THEME_STYLE: Record<HubColumnId, { icon: LucideIcon; chip: string }> = {
   strom: { icon: Zap, chip: "bg-amber-100 text-amber-800" },
-  waerme: { icon: Flame, chip: "bg-accent-soft text-accent" },
+  waerme: { icon: Flame, chip: "bg-accent-soft text-accent-strong" },
   mobilitaet: { icon: Car, chip: "bg-sky-100 text-sky-800" },
-  mieterstrom: { icon: Users, chip: "bg-emerald-100 text-emerald-800" },
+  mieterstrom: { icon: Users, chip: "bg-brand-soft text-brand" },
 };
+
+/** Große Fläche des Hubs, auf der die Kacheln liegen. */
+const HUB_PANEL = "rounded-3xl bg-elevated p-4 shadow-panel sm:p-6";
 
 /** Spaltenraster des Hubs: vier Themen nebeneinander, auf schmalen Schirmen zwei oder eine. */
 const HUB_GRID = "grid gap-x-4 gap-y-6 md:grid-cols-2 xl:grid-cols-4";
@@ -57,30 +60,28 @@ export function PlanningHub({
   const outcome = tenantOutcome(offer.tenantPower, result.yield.annualKwh);
   const TenantIcon = THEME_STYLE.mieterstrom.icon;
   return (
-    <div className="mt-5 space-y-8">
-      <section aria-labelledby="hub-ausgangslage">
-        <h2 id="hub-ausgangslage" className="sr-only">Ausgangslage beim Kunden</h2>
+    <div className="mt-4 space-y-4">
+      <section aria-labelledby="hub-ausgangslage" className={HUB_PANEL}>
+        <h2 id="hub-ausgangslage" className="title-lg mb-5">Ausgangslage beim Kunden</h2>
         <div className={HUB_GRID}>
           {THEMES.map((theme) => {
             const { icon: Icon, chip } = THEME_STYLE[theme.id];
             return (
               <div key={theme.id} className="min-w-0 space-y-3" data-theme={theme.id}>
-                <h3 className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-semibold ${chip}`}>
-                  <Icon size={16} aria-hidden /> {theme.label}
-                </h3>
+                <ThemeHead icon={Icon} chip={chip}>{theme.label}</ThemeHead>
                 {baseline[theme.id].map((tile) => (
                   <Tile key={tile.id} id={tile.id} title={tile.title} filled={Boolean(tile.value)}>
                     {tile.value ? (
                       <>
-                        <p className="text-xl font-semibold tabular-nums">{tile.value}</p>
-                        {tile.detail ? <p className="text-sm text-muted">{tile.detail}</p> : null}
+                        <p className="figure">{tile.value}</p>
+                        {tile.detail ? <p className="mt-0.5 text-sm text-muted">{tile.detail}</p> : null}
                       </>
                     ) : (
                       <p className="text-sm text-muted">{tile.empty}</p>
                     )}
                     <TileAction>
                       <Button type="button" size="sm" variant="secondary" onClick={() => onOpen(tile.topic)}>
-                        {tile.value ? "Bearbeiten" : locked ? "Ansehen" : "Eintragen"} <ArrowRight size={15} aria-hidden />
+                        {tile.value ? "Bearbeiten" : locked ? "Ansehen" : "Eintragen"}
                       </Button>
                     </TileAction>
                   </Tile>
@@ -89,14 +90,12 @@ export function PlanningHub({
             );
           })}
           <div className="min-w-0 space-y-3" data-theme="mieterstrom">
-            <h3 className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-semibold ${THEME_STYLE.mieterstrom.chip}`}>
-              <TenantIcon size={16} aria-hidden /> Mieterstrom
-            </h3>
+            <ThemeHead icon={TenantIcon} chip={THEME_STYLE.mieterstrom.chip}>Mieterstrom</ThemeHead>
             <Tile id="mieterstrom" title="Vermarktung und Tarif" filled={Boolean(tenant.value)}>
               {tenant.value ? (
                 <>
-                  <p className="text-xl font-semibold">{tenant.value}</p>
-                  <p className="text-sm text-muted">{tenant.detail}</p>
+                  <p className="figure">{tenant.value}</p>
+                  <p className="mt-0.5 text-sm text-muted">{tenant.detail}</p>
                   {tenant.note ? <p className="text-sm text-muted">{tenant.note}</p> : null}
                 </>
               ) : (
@@ -104,7 +103,7 @@ export function PlanningHub({
               )}
               <TileAction>
                 <Button type="button" size="sm" variant="secondary" onClick={() => onTenant("allgemein")}>
-                  {tenant.value ? (locked ? "Ansehen" : "Bearbeiten") : locked ? "Ansehen" : "Einrichten"} <ArrowRight size={15} aria-hidden />
+                  {tenant.value ? (locked ? "Ansehen" : "Bearbeiten") : locked ? "Ansehen" : "Einrichten"}
                 </Button>
               </TileAction>
             </Tile>
@@ -112,9 +111,9 @@ export function PlanningHub({
         </div>
       </section>
 
-      <section aria-labelledby="hub-planung">
-        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <h2 id="hub-planung" className="font-display text-2xl">Planung</h2>
+      <section aria-labelledby="hub-planung" className={HUB_PANEL}>
+        <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-3">
+          <h2 id="hub-planung" className="title-lg">Planung</h2>
           {variantBar}
         </div>
         <div className={HUB_GRID}>
@@ -125,9 +124,9 @@ export function PlanningHub({
                 if (topic === "pv") {
                   return (
                     <Tile key={topic} id={topic} title="Photovoltaikanlage" filled={summary.filled}>
-                      <p className="text-xl font-semibold tabular-nums">{summary.value || "Noch nicht geplant"}</p>
-                      {summary.detail ? <p className="text-sm text-muted">{summary.detail}</p> : null}
-                      <ul className="mt-3 space-y-1.5 border-l border-line pl-3 text-sm">
+                      <p className="figure">{summary.value || "Noch nicht geplant"}</p>
+                      {summary.detail ? <p className="mt-0.5 text-sm text-muted">{summary.detail}</p> : null}
+                      <ul className="mt-4 space-y-2 text-sm">
                         <Step done={progress.roof}>Gebäude gezeichnet</Step>
                         <Step done={progress.layout}>Modulbelegung</Step>
                         <Step done={progress.inverter}>Wechselrichter gewählt</Step>
@@ -135,7 +134,7 @@ export function PlanningHub({
                       </ul>
                       {progress.modules && !progress.layout ? <p className="mt-2 text-xs text-muted">Module stehen in den Positionen, sind aber noch nicht auf dem Dach belegt.</p> : null}
                       <TileAction>
-                        <Button type="button" size="sm" onClick={onPlan}>Zur 3D-Planung <ArrowRight size={15} aria-hidden /></Button>
+                        <Button type="button" size="sm" onClick={onPlan}>Zur 3D-Planung</Button>
                         <Button type="button" size="sm" variant="secondary" onClick={() => onOpen("pv")}>Preise und Ertrag</Button>
                       </TileAction>
                     </Tile>
@@ -145,8 +144,8 @@ export function PlanningHub({
                   <Tile key={topic} id={topic} title={TOPIC_LABEL[topic]} filled={summary.filled}>
                     {summary.filled ? (
                       <>
-                        <p className="text-xl font-semibold tabular-nums">{summary.value}</p>
-                        {summary.detail ? <p className="text-sm text-muted">{summary.detail}</p> : null}
+                        <p className="figure">{summary.value}</p>
+                        {summary.detail ? <p className="mt-0.5 text-sm text-muted">{summary.detail}</p> : null}
                       </>
                     ) : (
                       <p className="text-sm text-muted">{PLAN_EMPTY[topic]}</p>
@@ -163,13 +162,13 @@ export function PlanningHub({
           ))}
           <div className="min-w-0 space-y-4" data-plan-theme="mieterstrom">
             <Tile id="mieterstrom-ergebnis" title="Mieterstrom-Überschlag" filled={Boolean(outcome.value)}>
-              {outcome.value ? <p className="text-xl font-semibold tabular-nums">{outcome.value}</p> : null}
-              <p className="text-sm text-muted">{outcome.detail}</p>
+              {outcome.value ? <p className="figure">{outcome.value}</p> : null}
+              <p className="mt-0.5 text-sm text-muted">{outcome.detail}</p>
               {outcome.note ? <p className={`mt-1 text-sm ${outcome.warn ? "font-semibold text-warn" : "text-muted"}`}>{outcome.note}</p> : null}
               {offer.tenantPower ? (
                 <TileAction>
                   <Button type="button" size="sm" variant="secondary" onClick={() => onTenant(outcome.value ? "zusammenfassung" : "allgemein")}>
-                    {outcome.value ? "Zusammenfassung" : "Angaben ergänzen"} <ArrowRight size={15} aria-hidden />
+                    {outcome.value ? "Zusammenfassung" : "Angaben ergänzen"}
                   </Button>
                 </TileAction>
               ) : null}
@@ -181,10 +180,21 @@ export function PlanningHub({
   );
 }
 
+/** Kopf einer Themenspalte: Symbol auf einer getönten Fläche, daneben der Name. */
+function ThemeHead({ icon: Icon, chip, children }: { icon: LucideIcon; chip: string; children: React.ReactNode }) {
+  return (
+    <h3 className="flex items-center gap-2.5 font-semibold">
+      <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${chip}`}><Icon size={17} aria-hidden /></span>
+      {children}
+    </h3>
+  );
+}
+
+/** Eine Kachel. Mit Inhalt liegt sie weiß auf der Fläche, ohne Inhalt ist sie nur umrissen. */
 function Tile({ id, title, filled, children }: { id: string; title: string; filled: boolean; children: React.ReactNode }) {
   return (
-    <article data-tile={id} className={`flex flex-col rounded-2xl border p-4 ${filled ? "border-line bg-white shadow-sm" : "border-dashed border-line bg-elevated"}`}>
-      <h4 className="mb-1 font-semibold">{title}</h4>
+    <article data-tile={id} className={`flex min-h-[9.25rem] flex-col rounded-2xl p-4 ${filled ? "bg-surface ring-1 ring-black/[0.04]" : "border border-dashed border-[#c3cac6]"}`}>
+      <h4 className="mb-1.5 text-sm font-semibold">{title}</h4>
       {children}
     </article>
   );
@@ -196,8 +206,12 @@ function TileAction({ children }: { children: React.ReactNode }) {
 
 function Step({ done, children }: { done: boolean; children: React.ReactNode }) {
   return (
-    <li className={`flex items-center gap-2 ${done ? "text-ink" : "text-muted"}`}>
-      {done ? <Check size={16} className="text-ok" aria-hidden /> : <Circle size={16} aria-hidden />}
+    <li className={`flex items-center gap-2.5 ${done ? "text-ink" : "text-muted"}`}>
+      {done ? (
+        <span className="grid size-[1.125rem] shrink-0 place-items-center rounded-full bg-brand text-white"><Check size={12} strokeWidth={3} aria-hidden /></span>
+      ) : (
+        <span className="size-[1.125rem] shrink-0 rounded-full border-[1.5px] border-[#b9c1bc]" aria-hidden />
+      )}
       <span>{children}</span>
       <span className="sr-only">{done ? "erledigt" : "offen"}</span>
     </li>

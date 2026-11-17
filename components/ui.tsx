@@ -2,20 +2,21 @@ import Link from "next/link";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
 
+/* Knöpfe sind ganz rund. Grün ist die Handlung, Weiß die ruhige zweite Wahl. */
 const buttonStyles = cva(
-  "inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
         primary: "bg-brand text-white hover:bg-brand-strong",
-        secondary: "border border-line bg-white text-ink hover:bg-accent-soft",
+        secondary: "bg-surface text-ink shadow-raise hover:bg-brand-soft",
         ghost: "text-ink hover:bg-black/5",
-        danger: "border border-danger/30 bg-white text-danger hover:bg-red-50",
+        danger: "bg-surface text-danger shadow-raise hover:bg-red-50",
       },
       size: {
-        sm: "h-8 px-3",
-        md: "h-10 px-4",
-        lg: "h-11 px-5",
+        sm: "h-9 px-4",
+        md: "h-11 px-5",
+        lg: "h-12 px-6",
       },
     },
     defaultVariants: { variant: "primary", size: "md" },
@@ -45,6 +46,10 @@ export function ButtonLink({
   );
 }
 
+/**
+ * Kopf einer Seite: eine ruhige Zeile, darunter die große Überschrift.
+ * Auf breiten Schirmen steht er neben der Suche (Klasse `page-head`, siehe app/globals.css).
+ */
 export function PageHeader({
   eyebrow,
   title,
@@ -57,17 +62,18 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        {eyebrow ? <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">{eyebrow}</p> : null}
-        <h1 className="font-display text-3xl leading-tight text-ink">{title}</h1>
-        {description ? <p className="mt-1 max-w-2xl text-sm text-muted">{description}</p> : null}
+    <div className="mb-6">
+      <div className="page-head">
+        {eyebrow ? <p className="text-sm text-muted">{eyebrow}</p> : null}
+        <h1 className="title-xl text-ink">{title}</h1>
       </div>
-      {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+      {description ? <p className="mt-3 max-w-2xl text-sm text-muted">{description}</p> : null}
+      {actions ? <div className="mt-4 flex flex-wrap gap-2">{actions}</div> : null}
     </div>
   );
 }
 
+/** Zustand als kleine Marke mit Punkt. Die Farbe trägt die Bedeutung, der Text nennt sie. */
 export function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "ok" | "warn" | "info" | "danger" }) {
   const tones = {
     neutral: "bg-black/5 text-ink",
@@ -76,27 +82,33 @@ export function Badge({ children, tone = "neutral" }: { children: React.ReactNod
     info: "bg-sky-100 text-info",
     danger: "bg-red-100 text-danger",
   };
-  return <span className={cn("inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold", tones[tone])}>{children}</span>;
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold", tones[tone])}>
+      <i className="size-1.5 rounded-full bg-current" aria-hidden />
+      {children}
+    </span>
+  );
 }
 
 export function EmptyState({ title, text, action }: { title: string; text: string; action?: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-dashed border-line bg-elevated px-6 py-12 text-center">
-      <h2 className="font-display text-2xl">{title}</h2>
+    <div className="rounded-3xl border border-dashed border-line bg-elevated px-6 py-12 text-center">
+      <h2 className="title-lg">{title}</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted">{text}</p>
       {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );
 }
 
-export const th = "px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted";
+export const th = "px-4 py-3 text-left text-xs font-medium text-muted";
 export const td = "border-t border-line px-4 py-3 align-middle";
 
+/** Große Fläche, auf der Karten und Felder liegen. */
 export function Panel({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <section className={cn("rounded-2xl border border-line bg-elevated p-4 shadow-sm sm:p-5", className)}>{children}</section>;
+  return <section className={cn("rounded-3xl bg-elevated p-4 shadow-panel sm:p-6", className)}>{children}</section>;
 }
 
 export function Notice({ children, tone = "warn" }: { children: React.ReactNode; tone?: "warn" | "ok" | "danger" }) {
   const tones = { warn: "bg-amber-50 text-warn", ok: "bg-emerald-50 text-ok", danger: "bg-red-50 text-danger" };
-  return <div className={cn("rounded-xl px-4 py-3 text-sm", tones[tone])}>{children}</div>;
+  return <div className={cn("rounded-2xl px-4 py-3 text-sm", tones[tone])}>{children}</div>;
 }

@@ -1,9 +1,10 @@
 // Baut die Vorschau der 3D-Planung als eigenständige Seite nach preview/roof3d/dist.
 // Aufruf: node scripts/preview-roof3d.mjs
 import { build } from "esbuild";
-import { copyFile, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { writePageWithFont } from "./preview-font.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "preview/roof3d/dist");
@@ -20,4 +21,4 @@ await build({
   define: { "process.env.NODE_ENV": '"production"' },
   logLevel: "info",
 });
-await copyFile(path.join(root, "preview/roof3d/index.html"), path.join(out, "index.html"));
+await writePageWithFont(root, path.join(root, "preview/roof3d/index.html"), path.join(out, "index.html"));

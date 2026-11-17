@@ -78,7 +78,7 @@ export function LineEditor({
         const net = line.quantity * line.unitPriceNet * (1 - line.discountPercent / 100);
         const margin = net > 0 ? (net - line.quantity * line.purchasePriceNet) / net : 0;
         return (
-          <div key={line.id} className="rounded-xl border border-line p-3">
+          <div key={line.id} className="rounded-2xl bg-surface p-3 ring-1 ring-black/[0.04]">
             <div className="grid gap-2 md:grid-cols-12">
               <TextInput aria-label="Bezeichnung" className="md:col-span-5" value={line.name} onChange={(event) => replace(line.id, { name: event.target.value })} />
               <NumberField ariaLabel="Menge" className="md:col-span-2" digits={line.quantity % 1 === 0 ? 0 : 1} value={line.quantity} onChange={(quantity) => replace(line.id, { quantity })} />
@@ -94,7 +94,7 @@ export function LineEditor({
               <span>Marge {formatPercent(margin)}</span>
               <label className="flex items-center gap-1">
                 Steuer
-                <select className="rounded border border-line bg-white px-1 py-0.5" value={line.vatCategory} onChange={(event) => replace(line.id, { vatCategory: event.target.value === "PV_NULL" ? "PV_NULL" : "REGEL" })}>
+                <select className="rounded-md border border-line bg-white px-1.5 py-0.5" value={line.vatCategory} onChange={(event) => replace(line.id, { vatCategory: event.target.value === "PV_NULL" ? "PV_NULL" : "REGEL" })}>
                   <option value="PV_NULL">0 % Vorlage</option>
                   <option value="REGEL">19 %</option>
                 </select>
@@ -108,7 +108,7 @@ export function LineEditor({
           <option value="">Aus dem Katalog hinzufügen</option>
           {choices.map((item) => <option key={item.id} value={item.id}>{item.name} · {formatEuro(item.salesPriceNet)}</option>)}
         </select>
-        <button type="button" className="h-10 rounded-xl border border-line bg-white px-3 text-sm font-semibold" onClick={addFree}>Freie Position</button>
+        <button type="button" className="h-[2.625rem] rounded-full bg-surface px-4 text-sm font-semibold shadow-raise hover:bg-brand-soft" onClick={addFree}>Freie Position</button>
       </div>
     </div>
   );
