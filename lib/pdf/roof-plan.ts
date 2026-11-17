@@ -1,10 +1,13 @@
 import PDFDocument from "pdfkit";
-import { centroidLngLat, heightOnPlane, moduleCornersAt, toLocal, vertexHeights, type XY } from "@/lib/roof/geo";
+import { centroidLngLat, centroidXY, heightOnPlane, moduleCornersAt, toLocal, vertexHeights, type XY } from "@/lib/roof/geo";
 import { activeModuleCount } from "@/lib/roof/types";
 import { formatNumber } from "@/lib/format";
 import type { RoofFaceInput } from "@/lib/pvgis/types";
 
 type Colors = { brand: string; ink: string; muted: string; accent: string };
+
+/** Strings aus der 3D-Planung, mit dem Anschluss als fertigem Text ("MPP 1 an Wechselrichter"). */
+export type RoofPlanString = { id: string; name: string; color: string; port: string };
 
 type Point = { x: number; y: number };
 
@@ -14,7 +17,7 @@ type Point = { x: number; y: number };
  */
 type Doc = InstanceType<typeof PDFDocument>;
 
-export function drawRoofPlan(doc: Doc, faces: RoofFaceInput[], colors: Colors) {
+export function drawRoofPlan(doc: Doc, faces: RoofFaceInput[], colors: Colors, strings: RoofPlanString[] = []) {
   const planned = faces.filter((face) => (face.geometry?.ring.length ?? 0) >= 3);
   if (planned.length === 0) return;
   const anchors = planned.flatMap((face) => face.geometry?.ring ?? []);
@@ -38,6 +41,22 @@ export function drawRoofPlan(doc: Doc, faces: RoofFaceInput[], colors: Colors) {
   /* Belegte Module einer Fläche im gemeinsamen Bezugssystem der Zeichnung. */
   const panelsOf = (face: RoofFaceInput) =>
     (face.geometry?.modules ?? []).filter((panel) => panel.active).map((panel) => moduleCornersAt(face.geometry?.ring ?? [], panel.corners, origin));
+  /* Je String: Farbe, Stückzahl, Leistung und der Weg durch die Module in der Reihenfolge der Verschaltung. */
+  const wiring = new Map(strings.map((entry) => [entry.id, { ...entry, count: 0, watts: 0, path: [] as { order: number; at: XY }[] }]));
+  /* Zu jedem belegten Modul einer Fläche sein String, in derselben Reihenfolge wie `panelsOf`. */
+  const ownersOf = (face: RoofFaceInput) =>
+    (face.geometry?.modules ?? []).filter((panel) => panel.active).map((panel) => ({ owner: panel.string ? wiring.get(panel.string) ?? null : null, order: panel.order ?? 0 }));
+  for (const face of planned) {
+    const owners = ownersOf(face);
+    panelsOf(face).forEach((corners, index) => {
+      const { owner, order } = owners[index];
+      if (!owner) return;
+      owner.count += 1;
+      owner.watts += face.geometry?.placement?.powerWp ?? 0;
+      owner.path.push({ order, at: centroidXY(corners) });
+    });
+  }
+  const wired = [...wiring.values()].filter((entry) => entry.count > 0);
   for (const face of planned) {
     localOf(face).forEach(collect);
     panelsOf(face).forEach((corners) => corners.forEach(collect));
@@ -49,9 +68,20 @@ export function drawRoofPlan(doc: Doc, faces: RoofFaceInput[], colors: Colors) {
     for (const obstacle of face.geometry?.obstacles ?? []) {
       strokeFill(doc, obstacle.ring.map((point) => toLocal(point, origin)).map((point) => projectPlan(point[0], point[1])), colors.accent, colors.accent);
     }
-    for (const corners of panelsOf(face)) {
-      strokeFill(doc, corners.map((corner) => projectPlan(corner[0], corner[1])), "#1e4d6b", "#143044");
-    }
+    const owners = ownersOf(face);
+    panelsOf(face).forEach((corners, index) => {
+      strokeFill(doc, corners.map((corner) => projectPlan(corner[0], corner[1])), owners[index].owner?.color ?? "#1e4d6b", "#143044");
+    });
+  }
+  /* Der Weg jedes Strings durch seine Module, als dünne helle Linie über der Draufsicht. */
+  for (const entry of wired) {
+    const stops = entry.path.sort((a, b) => a.order - b.order).map((stop) => projectPlan(stop.at[0], stop.at[1]));
+    if (stops.length < 2) continue;
+    doc.save();
+    doc.moveTo(stops[0].x, stops[0].y);
+    for (const stop of stops.slice(1)) doc.lineTo(stop.x, stop.y);
+    doc.strokeColor("#ffffff").lineWidth(0.7).lineJoin("round").stroke();
+    doc.restore();
   }
 
   const isoBox = boxOf(48, 364, 250, 190);
@@ -103,11 +133,36 @@ export function drawRoofPlan(doc: Doc, faces: RoofFaceInput[], colors: Colors) {
     y += 16;
   }
   doc.font("Regular").fontSize(8).fillColor(colors.muted).text(
-    "Blau: Modul. Orange: Hindernis. Die Verschattung aus Hindernissen und dem PVGIS-Horizont steckt als zusätzlicher Verlust in der Ertragsrechnung, nicht als zweites Mal in den 14 % Anlagenverlust.",
+    `${wired.length > 0 ? "Draufsicht: Module in der Farbe ihres Strings, die helle Linie zeigt die Reihenfolge. Blau: Modul ohne String." : "Blau: Modul."} Orange: Hindernis. Die Verschattung aus Hindernissen und dem PVGIS-Horizont steckt als zusätzlicher Verlust in der Ertragsrechnung, nicht als zweites Mal in den 14 % Anlagenverlust.`,
     48,
     570,
     { width: 500 },
   );
+  if (wired.length === 0) return;
+
+  /* Verschaltung: eine Spalte, bei vielen Strings zwei. So viele Zeilen, wie über der Fußzeile Platz haben. */
+  doc.font("Bold").fontSize(10).fillColor(colors.ink).text("Verschaltung", 48, 612, { width: 500 });
+  const rows = 12;
+  const columns = wired.length > rows ? 2 : 1;
+  const columnWidth = columns === 1 ? 500 : 245;
+  const shown = wired.length > rows * 2 ? wired.slice(0, rows * 2 - 1) : wired;
+  shown.forEach((entry, index) => {
+    const x = 48 + Math.floor(index / rows) * 255;
+    const top = 630 + (index % rows) * 12;
+    doc.save();
+    doc.rect(x, top + 1.5, 7, 7).fill(entry.color);
+    doc.restore();
+    doc.font("Regular").fontSize(8).fillColor(colors.ink).text(
+      `String ${entry.name}: ${entry.count} ${entry.count === 1 ? "Modul" : "Module"}, ${formatNumber(entry.watts / 1000, 2)} kWp${entry.port ? ` · ${entry.port}` : ""}`,
+      x + 12,
+      top,
+      { width: columnWidth - 12, lineBreak: false, ellipsis: true, height: 11 },
+    );
+  });
+  if (shown.length < wired.length) {
+    const index = shown.length;
+    doc.font("Regular").fontSize(8).fillColor(colors.muted).text(`und ${wired.length - shown.length} weitere Strings`, 48 + Math.floor(index / rows) * 255 + 12, 630 + (index % rows) * 12, { width: 235, lineBreak: false });
+  }
 }
 
 function iso(east: number, north: number, up: number): Point {

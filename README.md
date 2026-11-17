@@ -57,6 +57,8 @@ Der Ertrag einer Variante kommt von PVGIS (PVGIS © Europäische Union), solange
 
 Unter **Dach planen** im Schritt Solar sucht man die Objektadresse, legt Dachflächen auf ein Luftbild, füllt Module aus dem Katalog und sieht das Dach in 3D. Hindernisse und das PVGIS-Horizontprofil erhöhen die Anlagenverluste. Modulzahl, kWp, Neigung und Azimut gehen zurück in die Variante, die Wirtschaftlichkeit und das Angebots-PDF.
 
+In der **3D-Planung** folgt nach Gebäude und Modulen der Schritt **Strings**: Module zu Strings verbinden, an Wechselrichter und MPP-Tracker hängen, mit einer Prüfung von Spannung und Strom aus den Datenblattwerten des Katalogs. Bedienung, Prüfregeln und nötige Katalogwerte stehen in [docs/strings.md](docs/strings.md).
+
 Luftbilder und Gebäudemodelle, ohne API-Schlüssel:
 
 - In Nordrhein-Westfalen das Orthofoto von Geobasis NRW (Datenlizenz Deutschland – Zero – Version 2.0).

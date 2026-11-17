@@ -25,7 +25,8 @@ export type ObstacleSpec = {
   shape?: XY[];
 };
 
-export type PlanModule = { corners: [XY, XY, XY, XY]; active: boolean };
+/** Platz des Rasters. `string` und `order` sagen, in welchem String das Modul hängt und an welcher Stelle (siehe strings.ts). */
+export type PlanModule = { corners: [XY, XY, XY, XY]; active: boolean; string?: string; order?: number };
 
 export type FacePlan = {
   obstacles: ObstacleSpec[];
@@ -224,13 +225,15 @@ export function syncPlans(input: BuildingSpec): BuildingSpec {
      * Die Mitte des neuen Platzes muss auf einem alten Modul liegen, die Fuge zählt mit.
      */
     const full = plan.modules.length > 0 && plan.modules.every((cell) => cell.active);
-    const taken = plan.modules.filter((cell) => cell.active).map((cell) => cell.corners);
+    const taken = plan.modules.filter((cell) => cell.active);
     plans[face.edge] = {
       ...plan,
       layoutKey: key,
       modules: fresh.map((cell) => {
         const center = centroidXY(cell.corners);
-        return { ...cell, active: full || taken.some((ring) => pointInPolygon(center, ring) || distanceToEdges(center, ring) < 0.06) };
+        const before = taken.find((entry) => pointInPolygon(center, entry.corners)) ?? taken.find((entry) => distanceToEdges(center, entry.corners) < 0.06);
+        /* Ein Modul, das an seinem Platz bleibt, behält auch seinen String. */
+        return before?.string ? { ...cell, active: true, string: before.string, order: before.order } : { ...cell, active: full || before != null };
       }),
     };
   }
@@ -292,7 +295,8 @@ export function moveObstacle(spec: BuildingSpec, edge: number, id: string, cente
 export function setCells(spec: BuildingSpec, edge: number, indexes: number[] | "all", active: boolean): BuildingSpec {
   const plan = spec.plans?.[edge];
   if (!plan) return spec;
-  const modules = plan.modules.map((cell, index) => (indexes === "all" || indexes.includes(index) ? { ...cell, active } : cell));
+  /* Ein Platz, der geleert wird, verliert auch seinen String. */
+  const modules = plan.modules.map((cell, index): PlanModule => (indexes === "all" || indexes.includes(index) ? (active ? { ...cell, active } : { corners: cell.corners, active }) : cell));
   return { ...spec, plans: { ...spec.plans, [edge]: { ...plan, modules } } };
 }
 

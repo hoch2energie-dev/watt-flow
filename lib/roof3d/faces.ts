@@ -48,6 +48,7 @@ export function buildingsFromFaces(faces: RoofFaceInput[], origin: LngLat): Buil
           (panel): PlanModule => ({
             corners: panel.corners.map((corner) => toLocal(toLngLat(corner, faceOrigin), origin)) as PlanModule["corners"],
             active: panel.active,
+            ...(panel.active && panel.string ? { string: panel.string, order: panel.order } : {}),
           }),
         ),
       });
@@ -133,6 +134,7 @@ export function facesFromBuildings(buildings: BuildingSpec[], origin: LngLat, pr
             (cell): PlannedModule => ({
               corners: cell.corners.map((corner) => toLocal(toLngLat(corner, origin), faceOrigin)) as PlannedModule["corners"],
               active: cell.active,
+              ...(cell.active && cell.string ? { string: cell.string, order: cell.order ?? 1 } : {}),
             }),
           ),
         };

@@ -2,6 +2,7 @@ import type { CalcInput, CalcLine } from "@/lib/calc/offer";
 import type { Qualification } from "@/lib/checklist";
 import { yieldRequestKey } from "@/lib/pvgis/faces";
 import type { RoofFaceInput } from "@/lib/pvgis/types";
+import type { VariantPlanning } from "@/lib/roof3d/strings";
 import type { TenantPower } from "@/lib/tenant-power";
 
 export type VatCategory = "PV_NULL" | "REGEL";
@@ -55,6 +56,8 @@ export type VariantDTO = {
   yieldMonthlyKwh: number[] | null;
   yieldNotice: string;
   yieldKey: string;
+  /** Wechselrichter und Strings aus der 3D-Planung. `null`, solange keine angelegt sind. */
+  planning: VariantPlanning | null;
   lines: LineDTO[];
 };
 
@@ -207,6 +210,7 @@ export function blankVariant(name: string, sortOrder: number, defaults: VariantD
     yieldMonthlyKwh: null,
     yieldNotice: "",
     yieldKey: "",
+    planning: null,
     lines: [],
   };
 }

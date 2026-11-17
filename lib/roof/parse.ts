@@ -124,7 +124,11 @@ function parseModule(value: unknown): PlannedModule | null {
     if (!Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 5000 || Math.abs(y) > 5000) return null;
     corners[index] = [x, y];
   }
-  return { corners, active: raw.active !== false };
+  const active = raw.active !== false;
+  const order = Number(raw.order);
+  /* Nur ein belegter Platz kann in einem String hängen. */
+  const wired = active && typeof raw.string === "string" && /^[A-Za-z0-9:_-]{1,60}$/.test(raw.string) && Number.isInteger(order) && order >= 1 && order <= MAX_MODULES * 16;
+  return wired ? { corners, active, string: raw.string as string, order } : { corners, active };
 }
 
 function parseShading(value: unknown): RoofGeometry["shading"] {

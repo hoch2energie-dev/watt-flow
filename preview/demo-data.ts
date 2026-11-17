@@ -95,9 +95,10 @@ export function demoOffer(): OfferDTO {
         yieldMonthlyKwh: null,
         yieldNotice: "",
         yieldKey: "",
+        planning: null,
         lines: [
-          line(0, "module", "pv_module", "Beispielmodul 450 Wp Glas-Glas", 24, 185, 118, { powerWp: 450, widthMm: 1134, heightMm: 1762 }),
-          line(1, "inverter", "inverter", "Beispiel-Hybridwechselrichter 10 kW", 1, 1890, 1420, { acPowerKw: 10, phases: "3", mppt: 2 }),
+          { ...line(0, "module", "pv_module", "Beispielmodul 450 Wp Glas-Glas", 24, 185, 118, { powerWp: 450, widthMm: 1134, heightMm: 1762 }), catalogItemId: "k1" },
+          { ...line(1, "inverter", "inverter", "Beispiel-Hybridwechselrichter 10 kW", 1, 1890, 1420, { acPowerKw: 10, phases: "3", mppt: 2 }), catalogItemId: "k3" },
           line(2, "mounting", "mounting_roof", "Montagesystem Ziegeldach und Elektroinstallation", 1, 3400, 2500, {}, "Pauschale"),
           line(3, "storage", "battery", "Beispielspeicher 10 kWh", 1, 5200, 4100, { usableKwh: 10 }),
           line(4, "extra", "scaffolding", "Gerüst", 1, 950, 700, {}, "Pauschale"),
@@ -112,9 +113,10 @@ function option(id: string, typeKey: string, name: string, salesPriceNet: number
 }
 
 export const demoCatalog: CatalogOption[] = [
-  option("k1", "pv_module", "Beispielmodul 450 Wp Glas-Glas", 185, 118, { powerWp: 450, widthMm: 1134, heightMm: 1762 }),
+  option("k1", "pv_module", "Beispielmodul 450 Wp Glas-Glas", 185, 118, { powerWp: 450, widthMm: 1134, heightMm: 1762, vocV: 39.8, iscA: 14.3, vmppV: 33.2, imppA: 13.56, tempCoeffVocPct: -0.25 }),
   option("k2", "pv_module", "Beispielmodul 430 Wp schwarz", 172, 109, { powerWp: 430, widthMm: 1134, heightMm: 1722 }),
-  option("k3", "inverter", "Beispiel-Hybridwechselrichter 10 kW", 1890, 1420, { acPowerKw: 10, phases: "3", mppt: 2 }),
+  option("k3", "inverter", "Beispiel-Hybridwechselrichter 10 kW", 1890, 1420, { acPowerKw: 10, phases: "3", mppt: 2, stringsPerMppt: 1, maxDcVoltageV: 1000, mppMinV: 180, mppMaxV: 850, maxInputCurrentA: 16, maxShortCircuitCurrentA: 22, maxDcPowerKw: 15 }),
+  option("k7", "inverter", "Beispiel-Wechselrichter 6 kW", 1380, 990, { acPowerKw: 6, phases: "3", mppt: 2 }),
   option("k4", "battery", "Beispielspeicher 10 kWh", 5200, 4100, { usableKwh: 10 }),
   option("k5", "wallbox", "Beispiel-Wallbox 11 kW", 890, 610, { powerKw: 11, phases: "3" }, "REGEL"),
   option("k6", "heat_pump", "Beispiel-Luftwärmepumpe 8 kW", 14900, 11200, { heatingPowerKw: 8 }, "REGEL"),

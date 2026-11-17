@@ -2,6 +2,7 @@ import type { OfferDTO, Specs, VariantDTO } from "@/lib/domain";
 import { yieldRequestKey } from "@/lib/pvgis/faces";
 import { normalizeMounting, type RoofFaceInput } from "@/lib/pvgis/types";
 import { parseRoofGeometry } from "@/lib/roof/parse";
+import { parsePlanning } from "@/lib/roof3d/strings";
 import { parseTenantPower } from "@/lib/tenant-power";
 
 function text(value: unknown, max: number): string {
@@ -122,6 +123,7 @@ function sanitizeVariant(input: unknown, index: number): VariantDTO {
     yieldMonthlyKwh: monthly(raw.yieldMonthlyKwh),
     yieldNotice: text(raw.yieldNotice, 400),
     yieldKey: text(raw.yieldKey, 400),
+    planning: parsePlanning(raw.planning),
     lines: lines.map((line, lineIndex) => {
       const entry = line as VariantDTO["lines"][number];
       const lineId = text(entry?.id, 80);

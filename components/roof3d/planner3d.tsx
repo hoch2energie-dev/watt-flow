@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Compass, Flame, Magnet, MousePointer2, PenLine, Redo2, Save, Scan, SquareDashed, Trash2, Undo2, X } from "lucide-react";
+import { ArrowLeftRight, CircleAlert, Compass, Flame, Info, Magnet, MousePointer2, PenLine, Plus, Redo2, Save, Scan, SquareDashed, Trash2, TriangleAlert, Undo2, X } from "lucide-react";
 import { angularDistance, type XY } from "@/lib/roof/geo";
 import {
   BUILDING_LIMITS,
@@ -18,6 +18,26 @@ import {
 import type { ModulePlacement } from "@/lib/roof/types";
 import { formatMeters } from "@/lib/roof3d/draw";
 import { OBSTACLE_DEFAULTS, PLACEMENT_DEFAULTS, moveObstacle, newObstacle, planTotals, setCells, syncPlans, updatePlan, withOutline, type FacePlan, type ObstacleKind, type ObstacleSpec } from "@/lib/roof3d/plans";
+import {
+  DEFAULT_PER_STRING,
+  NO_WIRING,
+  WIRING_LIMITS,
+  assignCells,
+  autoAssign,
+  autoString,
+  checkWiring,
+  clearString,
+  membership,
+  modulesPerString,
+  newString,
+  releaseCells,
+  removeString,
+  tidyWiring,
+  type InverterElectrical,
+  type ModuleElectrical,
+  type Wiring,
+  type WiringReport,
+} from "@/lib/roof3d/strings";
 import { NO_SELECTION, Stage, type Selection, type Step, type Tool, type ViewInfo } from "@/components/roof3d/stage";
 import "./planner3d.css";
 
@@ -26,26 +46,34 @@ export type GroundSource =
   | { kind: "image"; url: string; sizeM: number; credit: string }
   | { kind: "canvas"; paint: () => HTMLCanvasElement; sizeM: number; credit: string };
 
-/** Modul aus dem Katalog, mit den Maßen, die das Raster braucht. */
-export type ModuleOption = { id: string; name: string; powerWp: number; widthM: number; heightM: number };
+/** Modul aus dem Katalog, mit den Maßen, die das Raster braucht, und den Datenblattwerten für die Strings. */
+export type ModuleOption = { id: string; name: string; powerWp: number; widthM: number; heightM: number; electrical?: ModuleElectrical | null };
+/** Wechselrichter aus dem Katalog mit seinen Grenzwerten. */
+export type InverterOption = { id: string; name: string; data: InverterElectrical };
+/** Der Stand der Planung: Gebäude mit Modulen, dazu Strings und Wechselrichter. */
+export type PlanState = { buildings: BuildingSpec[]; wiring: Wiring };
 
 export type Planner3DProps = {
   title: string;
   subtitle?: string;
   initial: BuildingSpec[];
+  /** Strings und Wechselrichter, wie sie gespeichert sind. */
+  initialWiring?: Wiring;
   ground: GroundSource;
   modules?: ModuleOption[];
+  /** Wechselrichter, die sich im Schritt Strings wählen lassen. */
+  inverters?: InverterOption[];
   /** Modul, das vorgeschlagen wird, solange noch auf keiner Fläche eines gewählt ist. */
   defaultModuleId?: string | null;
   locked?: boolean;
   /** Speichert und gibt die Meldung für die Statuszeile zurück. Wirft bei Fehlern. */
-  onSave?: (buildings: BuildingSpec[]) => Promise<string>;
+  onSave?: (state: PlanState) => Promise<string>;
   /** Das Luftbild ließ sich nicht laden. Der Aufrufer kann eine andere Quelle geben. */
   onGroundError?: () => void;
   closeHref?: string;
 };
 
-type History = { past: BuildingSpec[][]; present: BuildingSpec[]; future: BuildingSpec[][] };
+type History = { past: PlanState[]; present: PlanState; future: PlanState[] };
 
 const numberText = (value: number, digits = 1) => value.toFixed(digits).replace(".", ",");
 const newId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `b${Date.now()}${Math.round(Math.random() * 1e6)}`);
@@ -62,14 +90,23 @@ function sunniestEdge(building: BuildingSpec): number | null {
   return faces.reduce((best, face) => (angularDistance(face.azimuthDeg, 180) < angularDistance(best.azimuthDeg, 180) ? face : best)).edge;
 }
 
-const NO_MODULES: ModuleOption[] = [];
+/** Die erste Fläche mit Modulen: dort beginnt man mit den Strings. */
+function wiredEdge(building: BuildingSpec): number | null {
+  const edge = Object.entries(building.plans ?? {}).find(([, plan]) => plan.modules.some((cell) => cell.active))?.[0];
+  return edge == null ? sunniestEdge(building) : Number(edge);
+}
 
-export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODULES, defaultModuleId = null, locked = false, onSave, onGroundError, closeHref }: Planner3DProps) {
+const NO_MODULES: ModuleOption[] = [];
+const NO_INVERTERS: InverterOption[] = [];
+
+export function Planner3D({ title, subtitle, initial, initialWiring = NO_WIRING, ground, modules = NO_MODULES, inverters = NO_INVERTERS, defaultModuleId = null, locked = false, onSave, onGroundError, closeHref }: Planner3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
   const stageRef = useRef<Stage | null>(null);
-  const [history, setHistory] = useState<History>({ past: [], present: initial, future: [] });
-  const [live, setLive] = useState<BuildingSpec[] | null>(null);
+  /* Beim Öffnen einmal in Einklang gebracht: Module, deren String es nicht mehr gibt, sind frei. */
+  const [origin] = useState<PlanState>(() => tidyWiring(initial, initialWiring));
+  const [history, setHistory] = useState<History>({ past: [], present: origin, future: [] });
+  const [live, setLive] = useState<PlanState | null>(null);
   const [selection, setSelection] = useState<Selection>(initial[0] ? { id: initial[0].id, edge: null, obstacle: null } : NO_SELECTION);
   const [step, setStep] = useState<Step>("gebaeude");
   const [tool, setTool] = useState<Tool>(initial.length === 0 && !locked ? "draw" : "select");
@@ -80,11 +117,17 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
   const [message, setMessage] = useState<string | null>(null);
   const [groundFailed, setGroundFailed] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(initial);
+  const [saved, setSaved] = useState(origin);
   const [closeArmed, setCloseArmed] = useState(false);
+  /* Module je String beim automatischen Verstringen. `null` heißt: der Vorschlag aus den Datenblattwerten. */
+  const [perString, setPerString] = useState<number | null>(null);
   const lastEdit = useRef({ key: "", time: 0 });
+  /* Kennung des Strings, der mit dem laufenden Strich entsteht. */
+  const pendingString = useRef<string | null>(null);
 
-  const buildings = live ?? history.present;
+  const shown = live ?? history.present;
+  const buildings = shown.buildings;
+  const wiring = shown.wiring;
   const selected = buildings.find((building) => building.id === selection.id) ?? null;
   const model = useMemo(() => (selected ? buildRoof(selected) : null), [selected]);
   const face = model && selection.edge != null ? model.faces.find((entry) => entry.edge === selection.edge) ?? null : null;
@@ -103,13 +146,32 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
     return option ? { ...PLACEMENT_DEFAULTS, catalogItemId: option.id, powerWp: option.powerWp, widthM: option.widthM, heightM: option.heightM } : null;
   }, [buildings, defaultModuleId, modules, selected]);
   const unsaved = history.present !== saved;
+  const activeString = step === "strings" ? wiring.strings.find((entry) => entry.id === selection.string) ?? null : null;
+  const activeId = activeString?.id ?? null;
+  const moduleData = useCallback((id: string | null) => modules.find((option) => option.id === id)?.electrical ?? null, [modules]);
+  const inverterData = useCallback((id: string) => inverters.find((option) => option.id === id)?.data ?? null, [inverters]);
+  const report = useMemo(() => (step === "strings" ? checkWiring(buildings, wiring, moduleData, inverterData) : null), [buildings, inverterData, moduleData, step, wiring]);
+  /* Wie viele Module in Reihe passen: mit dem Modul der gewählten Fläche und dem ersten Wechselrichter. */
+  const stringLimits = useMemo(() => {
+    const placement = plan?.placement ?? buildings.flatMap((building) => Object.values(building.plans ?? {})).find((entry) => entry.placement)?.placement ?? null;
+    const unit = wiring.inverters[0];
+    return modulesPerString(placement ? moduleData(placement.catalogItemId) : null, unit ? inverterData(unit.catalogItemId) : null);
+  }, [buildings, inverterData, moduleData, plan, wiring.inverters]);
+  const perStringShown = perString ?? stringLimits.max ?? DEFAULT_PER_STRING;
 
-  /** Legt einen Schritt für Rückgängig an. Gleiche `key` kurz hintereinander zählt als ein Schritt. */
-  const commit = useCallback((next: BuildingSpec[], key = "") => {
+  /**
+   * Legt einen Schritt für Rückgängig an. Gleiche `key` kurz hintereinander zählt als ein Schritt.
+   * Ohne `nextWiring` bleiben Strings und Wechselrichter, wie sie sind. Module und Stringliste werden dabei in Einklang gebracht.
+   */
+  const commit = useCallback((next: BuildingSpec[], key = "", nextWiring?: Wiring) => {
     const now = Date.now();
     const merge = key !== "" && key === lastEdit.current.key && now - lastEdit.current.time < 1500;
     lastEdit.current = { key, time: now };
-    setHistory((current) => ({ past: merge ? current.past : [...current.past.slice(-49), current.present], present: next, future: [] }));
+    setHistory((current) => {
+      const tidy = tidyWiring(next, nextWiring ?? current.present.wiring);
+      if (tidy.buildings === current.present.buildings && tidy.wiring === current.present.wiring) return current;
+      return { past: merge ? current.past : [...current.past.slice(-49), current.present], present: tidy, future: [] };
+    });
     setLive(null);
     setMessage(null);
     setCloseArmed(false);
@@ -127,9 +189,9 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
     (change: (building: BuildingSpec) => BuildingSpec, key: string) => {
       if (!selection.id || locked) return;
       /* Nur Zahlenfelder geben einen Schlüssel: Tippen in einem Feld zählt als ein Schritt. Auswahl und Knöpfe sind je ein eigener. */
-      commit(history.present.map((building) => (building.id === selection.id ? syncPlans(change(building)) : building)), key ? `${selection.id}:${key}` : "");
+      commit(history.present.buildings.map((building) => (building.id === selection.id ? syncPlans(change(building)) : building)), key ? `${selection.id}:${key}` : "");
     },
-    [commit, history.present, locked, selection.id],
+    [commit, history.present.buildings, locked, selection.id],
   );
   const changePlan = useCallback(
     (change: (plan: FacePlan) => FacePlan, key: string) => {
@@ -152,9 +214,62 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
       setSelection({ id: selection.id, edge: null, obstacle: null });
       return;
     }
-    commit(history.present.filter((building) => building.id !== selection.id));
+    commit(history.present.buildings.filter((building) => building.id !== selection.id));
     setSelection(NO_SELECTION);
-  }, [changePlan, commit, history.present, locked, selection]);
+  }, [changePlan, commit, history.present.buildings, locked, selection]);
+
+  /* ---------- Strings und Wechselrichter ---------- */
+  const changeWiring = (change: (current: Wiring) => Wiring, key = "") => {
+    if (locked) return;
+    commit(history.present.buildings, key, change(history.present.wiring));
+  };
+  const pickString = (id: string | null) => setSelection((current) => ({ ...current, obstacle: null, string: id }));
+  const addString = () => {
+    if (locked) return;
+    const strings = history.present.wiring.strings;
+    if (strings.length >= WIRING_LIMITS.strings) return setMessage(`Mehr als ${WIRING_LIMITS.strings} Strings sind in einer Planung nicht vorgesehen.`);
+    const added = newString(newId(), strings);
+    changeWiring((current) => ({ ...current, strings: [...current.strings, added] }));
+    pickString(added.id);
+  };
+  const autoWire = (scope: "face" | "all") => {
+    if (locked) return;
+    let state = history.present;
+    const targets =
+      scope === "all"
+        ? state.buildings.flatMap((building) => Object.keys(building.plans ?? {}).map((edge) => ({ building: building.id, edge: Number(edge) })))
+        : selection.id && selection.edge != null
+          ? [{ building: selection.id, edge: selection.edge }]
+          : [];
+    let created = 0;
+    for (const target of targets) {
+      const result = autoString(state.buildings, state.wiring, target, perStringShown, newId);
+      state = { buildings: result.buildings, wiring: result.wiring };
+      created += result.created.length;
+    }
+    if (created === 0) return setMessage(state.wiring.strings.length >= WIRING_LIMITS.strings ? `Mehr als ${WIRING_LIMITS.strings} Strings sind in einer Planung nicht vorgesehen.` : "Hier liegt kein freies Modul mehr.");
+    commit(state.buildings, "", state.wiring);
+    pickString(null);
+    setMessage(`${created === 1 ? "Ein String" : `${created} Strings`} angelegt, in Schlangenlinie von der Traufe zum First.`);
+  };
+  const removeOne = (id: string) => {
+    if (locked) return;
+    const next = removeString(history.present.buildings, history.present.wiring, id);
+    commit(next.buildings, "", next.wiring);
+    pickString(null);
+  };
+  const distribute = () => {
+    if (locked) return;
+    /* Leere Strings brauchen noch keinen Platz am Wechselrichter. */
+    const filled = membership(history.present.buildings).byString;
+    const next = autoAssign(history.present.wiring, inverterData, (id) => filled.has(id));
+    if (next === history.present.wiring) return setMessage("Kein MPP-Tracker ist mehr frei, oder alle Strings mit Modulen sind schon angeschlossen.");
+    commit(history.present.buildings, "", next);
+  };
+  const addInverter = (catalogItemId: string) => {
+    if (history.present.wiring.inverters.length >= WIRING_LIMITS.inverters) return setMessage(`Mehr als ${WIRING_LIMITS.inverters} Wechselrichter sind in einer Planung nicht vorgesehen.`);
+    changeWiring((current) => ({ ...current, inverters: [...current.inverters, { id: newId(), catalogItemId }] }));
+  };
 
   const save = useCallback(async () => {
     if (!onSave || locked || saving) return;
@@ -170,12 +285,14 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
   }, [history.present, locked, onSave, saving]);
 
   /* Die Bühne lebt außerhalb von React. Ihre Rückrufe lesen den jeweils aktuellen Stand über diese Ref. */
-  const handlers = useRef({ present: history.present, commit, locked, onGroundError });
-  handlers.current = { present: history.present, commit, locked, onGroundError };
+  const handlers = useRef({ present: history.present.buildings, wiring: history.present.wiring, commit, locked, onGroundError });
+  handlers.current = { present: history.present.buildings, wiring: history.present.wiring, commit, locked, onGroundError };
 
   useEffect(() => {
     if (!canvasRef.current || !overlayRef.current) return;
     const apply = (list: BuildingSpec[], id: string, change: (building: BuildingSpec) => BuildingSpec) => list.map((building) => (building.id === id ? change(building) : building));
+    /* Zwischenstand während des Ziehens: noch kein Schritt für Rückgängig. */
+    const preview = (next: BuildingSpec[]) => setLive({ buildings: next, wiring: handlers.current.wiring });
     const stage = new Stage(canvasRef.current, overlayRef.current, {
       onSelect: setSelection,
       onCreate: (outline: XY[]) => {
@@ -188,7 +305,7 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
         if (handlers.current.locked) return;
         const next = apply(handlers.current.present, id, (building) => withOutline(building, outline));
         if (done) handlers.current.commit(next);
-        else setLive(next);
+        else preview(next);
       },
       onPlaceObstacle: (id, edge, kind, center, size) => {
         if (handlers.current.locked) return;
@@ -208,7 +325,7 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
         });
         setSelection({ id, edge: landed, obstacle: moved });
         if (done) handlers.current.commit(next);
-        else setLive(next);
+        else preview(next);
       },
       onResizeObstacle: (id, edge, resized, shape, done) => {
         if (handlers.current.locked) return;
@@ -216,7 +333,7 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
           updatePlan(building, edge, (current) => ({ ...current, obstacles: current.obstacles.map((entry) => (entry.id === resized ? { ...entry, ...shape } : entry)) })),
         );
         if (done) handlers.current.commit(next);
-        else setLive(next);
+        else preview(next);
       },
       onPaint: (id, edge, indexes, active, done) => {
         if (handlers.current.locked) return;
@@ -224,7 +341,40 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
         if (indexes.length === 0) return setLive(null);
         const next = apply(handlers.current.present, id, (building) => setCells(building, edge, indexes, active));
         if (done) handlers.current.commit(next);
-        else setLive(next);
+        else preview(next);
+      },
+      onWire: (id, edge, indexes, target, erase, done) => {
+        if (handlers.current.locked) return;
+        const { present, wiring: current } = handlers.current;
+        /* Wie beim Belegen: immer alle Module des laufenden Strichs, eine leere Liste verwirft ihn. */
+        if (indexes.length === 0) {
+          pendingString.current = null;
+          return setLive(null);
+        }
+        const where = { building: id, edge };
+        let stringId = target != null && current.strings.some((entry) => entry.id === target) ? target : null;
+        if (erase) {
+          if (stringId == null) return;
+          const next = releaseCells(present, current, where, indexes);
+          if (done) handlers.current.commit(next);
+          else preview(next);
+          if (done) setSelection({ id, edge, obstacle: null, string: stringId });
+          return;
+        }
+        let wiring = current;
+        if (stringId == null) {
+          /* Ohne gewählten String beginnt der Strich einen neuen. Er behält über den ganzen Strich dieselbe Kennung. */
+          if (current.strings.length >= WIRING_LIMITS.strings) return setMessage(`Mehr als ${WIRING_LIMITS.strings} Strings sind in einer Planung nicht vorgesehen.`);
+          pendingString.current ??= newId();
+          const added = newString(pendingString.current, current.strings);
+          wiring = { ...current, strings: [...current.strings, added] };
+          stringId = added.id;
+        }
+        const next = assignCells(present, where, indexes, stringId);
+        if (!done) return setLive({ buildings: next, wiring });
+        pendingString.current = null;
+        handlers.current.commit(next, "", wiring);
+        setSelection({ id, edge, obstacle: null, string: stringId });
       },
       onDraft: setDraftPoints,
       onView: setView,
@@ -248,7 +398,7 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
     return () => window.removeEventListener("beforeunload", warn);
   }, [unsaved]);
 
-  useEffect(() => stageRef.current?.setBuildings(buildings, selection), [buildings, selection]);
+  useEffect(() => stageRef.current?.setBuildings(buildings, { ...selection, string: activeId }, wiring.strings), [activeId, buildings, selection, wiring.strings]);
   useEffect(() => stageRef.current?.setTool(tool), [tool]);
   useEffect(() => stageRef.current?.setStep(step), [step]);
   useEffect(() => stageRef.current?.setSnap(snap), [snap]);
@@ -275,10 +425,14 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
       setStep(next);
       setTool("select");
       if (next === "gebaeude") return setSelection((current) => ({ id: current.id, edge: null, obstacle: null }));
-      const building = history.present.find((entry) => entry.id === selection.id) ?? history.present[0];
-      setSelection(building ? { id: building.id, edge: sunniestEdge(building), obstacle: null } : NO_SELECTION);
+      const building = history.present.buildings.find((entry) => entry.id === selection.id) ?? history.present.buildings[0];
+      if (!building) return setSelection(NO_SELECTION);
+      if (next === "module") return setSelection({ id: building.id, edge: sunniestEdge(building), obstacle: null });
+      /* Strings: die Dachseite bleibt, auf der zuletzt Module gelegt wurden. Ein String ist noch nicht gewählt. */
+      const kept = building.id === selection.id && selection.edge != null && building.plans?.[selection.edge]?.modules.some((cell) => cell.active) ? selection.edge : wiredEdge(building);
+      setSelection({ id: building.id, edge: kept, obstacle: null, string: null });
     },
-    [history.present, selection.id],
+    [history.present.buildings, selection.edge, selection.id],
   );
 
   useEffect(() => {
@@ -299,7 +453,7 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
       } else if (key === "escape") {
         if (tool === "draw" && draftPoints > 0) stageRef.current?.cancelDraft();
         else if (tool !== "select") setTool("select");
-        else setSelection(step === "module" ? { id: selection.id, edge: selection.edge, obstacle: null } : NO_SELECTION);
+        else setSelection(step === "gebaeude" ? NO_SELECTION : { id: selection.id, edge: selection.edge, obstacle: null, string: null });
       } else if (key === "backspace" && tool === "draw") {
         event.preventDefault();
         stageRef.current?.removeLastPoint();
@@ -326,6 +480,14 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
           : "Weitere Ecke anklicken oder auf den ersten Punkt klicken, um das Dach zu schließen."
       : tool !== "select"
         ? `${OBSTACLE_DEFAULTS[tool].label}: auf die Stelle im Dach klicken oder mit gedrückter Maustaste aufziehen.`
+        : step === "strings"
+          ? totals.modules === 0
+            ? "Zuerst im Schritt Module Flächen belegen."
+            : locked
+              ? null
+              : activeString
+                ? `Freie Module anklicken oder überstreichen: Sie kommen in dieser Reihenfolge an String ${activeString.name}. Ein Klick auf ein Modul des Strings nimmt es heraus, ein Klick neben die Module beendet ihn.`
+                : "Freies Modul anklicken oder mehrere überstreichen: Daraus wird ein neuer String. Ein Klick auf ein verstringtes Modul wählt seinen String."
         : step === "module"
           ? buildings.length === 0
             ? "Zuerst im Schritt Gebäude ein Dach zeichnen."
@@ -354,7 +516,7 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
         <ol className="r3d-steps" aria-label="Schritte der Planung">
           <li><button type="button" className={step === "gebaeude" ? "is-active" : ""} onClick={() => openStep("gebaeude")}><span>1</span>Gebäude</button></li>
           <li><button type="button" className={step === "module" ? "is-active" : ""} onClick={() => openStep("module")}><span>2</span>Module</button></li>
-          <li><button type="button" disabled title="Folgt in einer späteren Stufe"><span>3</span>Strings</button></li>
+          <li><button type="button" className={step === "strings" ? "is-active" : ""} onClick={() => openStep("strings")}><span>3</span>Strings</button></li>
         </ol>
         {closeHref ? (
           <a
@@ -374,7 +536,30 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
         ) : null}
       </header>
 
-      {step === "module" && selected && face ? (
+      {step === "strings" && report ? (
+        <StringsPanel
+          report={report}
+          wiring={wiring}
+          activeId={activeId}
+          faceLabel={selected && face ? (selected.roofType === "flach" ? "Flachdach" : `Dachseite ${windName(face.azimuthDeg)}`) : null}
+          faceFree={plan?.modules.filter((cell) => cell.active && !cell.string).length ?? 0}
+          perString={perStringShown}
+          limits={stringLimits}
+          options={inverters}
+          locked={locked}
+          onPick={pickString}
+          onAdd={addString}
+          onAuto={autoWire}
+          onPerString={(value) => setPerString(Math.round(value))}
+          onRename={(id, name) => changeWiring((current) => ({ ...current, strings: current.strings.map((entry) => (entry.id === id ? { ...entry, name } : entry)) }), `s:${id}:name`)}
+          onConnect={(id, inverter, tracker) => changeWiring((current) => ({ ...current, strings: current.strings.map((entry) => (entry.id === id ? { ...entry, inverter, tracker } : entry)) }))}
+          onClear={(id) => (locked ? undefined : commit(clearString(history.present.buildings, id)))}
+          onRemove={removeOne}
+          onAddInverter={addInverter}
+          onRemoveInverter={(id) => changeWiring((current) => ({ ...current, inverters: current.inverters.filter((unit) => unit.id !== id) }))}
+          onDistribute={distribute}
+        />
+      ) : step === "module" && selected && face ? (
         <ModulePanel face={face} plan={plan} options={modules} suggestion={suggestion} locked={locked} flatRoof={selected.roofType === "flach"} onPlan={changePlan} onCells={(active) => changeSelected((building) => setCells(building, face.edge, "all", active), "")} />
       ) : step === "gebaeude" && selected && obstacle && face ? (
         <ObstaclePanel obstacle={obstacle} locked={locked} onChange={changeObstacle} onRemove={removeSelected} />
@@ -551,6 +736,217 @@ function ModulePanel({ face, plan, options, suggestion, locked, flatRoof, onPlan
         </>
       ) : null}
     </aside>
+  );
+}
+
+const FINDING_ICONS = { fehler: CircleAlert, warnung: TriangleAlert, hinweis: Info } as const;
+const FINDING_WORDS = { fehler: "Fehler", warnung: "Warnung", hinweis: "Hinweis" } as const;
+
+type StringsPanelProps = {
+  report: WiringReport;
+  wiring: Wiring;
+  activeId: string | null;
+  /** Name der gewählten Dachseite, `null` ohne Auswahl. */
+  faceLabel: string | null;
+  /** Freie Module auf der gewählten Dachseite. */
+  faceFree: number;
+  perString: number;
+  limits: { max: number | null; min: number | null };
+  options: InverterOption[];
+  locked: boolean;
+  onPick: (id: string | null) => void;
+  onAdd: () => void;
+  onAuto: (scope: "face" | "all") => void;
+  onPerString: (value: number) => void;
+  onRename: (id: string, name: string) => void;
+  onConnect: (id: string, inverter: string | null, tracker: number | null) => void;
+  onClear: (id: string) => void;
+  onRemove: (id: string) => void;
+  onAddInverter: (catalogItemId: string) => void;
+  onRemoveInverter: (id: string) => void;
+  onDistribute: () => void;
+};
+
+/** Schritt 3: Strings anlegen, an Wechselrichter und MPP-Tracker hängen, und sehen, ob Spannung und Strom passen. */
+function StringsPanel({ report, wiring, activeId, faceLabel, faceFree, perString, limits, options, locked, onPick, onAdd, onAuto, onPerString, onRename, onConnect, onClear, onRemove, onAddInverter, onRemoveInverter, onDistribute }: StringsPanelProps) {
+  const nameOf = (id: string) => wiring.strings.find((entry) => entry.id === id)?.name ?? "?";
+  const waiting = wiring.inverters.length > 0 && wiring.strings.some((entry) => (entry.inverter == null || entry.tracker == null) && (report.strings.get(entry.id)?.count ?? 0) > 0);
+  return (
+    <aside className="r3d-panel" aria-label="Strings und Wechselrichter">
+      <h2>Strings</h2>
+      <dl className="r3d-facts">
+        <div><dt>Module</dt><dd id="r3d-wire-all">{report.modules}</dd></div>
+        <div><dt>In Strings</dt><dd id="r3d-wire-done">{report.wired}</dd></div>
+        <div><dt>Frei</dt><dd id="r3d-wire-free">{report.free}</dd></div>
+      </dl>
+      {report.modules === 0 ? <p className="r3d-note">Es liegen noch keine Module. Das geht im Schritt Module.</p> : null}
+
+      <h3>Automatisch verstringen</h3>
+      <NumberRow id="r3d-per-string" label="Module je String" unit="" value={perString} step={1} limits={[1, 60]} disabled={locked} onChange={onPerString} />
+      <p className="r3d-note">
+        {limits.max != null
+          ? `Höchstens ${limits.max} in Reihe wegen der Leerlaufspannung bei −10 °C${limits.min != null ? `, mindestens ${limits.min} für den MPP-Bereich` : ""}.`
+          : "Üblicher Wert, solange Datenblattwerte von Modul oder Wechselrichter fehlen."}{" "}
+        Liegen mehr Module frei, entstehen gleich lange Strings.
+      </p>
+      <div className="r3d-row">
+        <button type="button" id="r3d-auto-face" className="r3d-button" disabled={locked || faceFree === 0} onClick={() => onAuto("face")}>{faceLabel ?? "Dachseite"}</button>
+        <button type="button" id="r3d-auto-all" className="r3d-button" disabled={locked || report.free === 0} onClick={() => onAuto("all")}>Alle Flächen</button>
+      </div>
+
+      <h3>Strings</h3>
+      {wiring.strings.length === 0 ? <p className="r3d-note">Noch kein String. Im Dach freie Module überstreichen oder oben automatisch verstringen.</p> : null}
+      <ul className="r3d-strings">
+        {wiring.strings.map((entry) => {
+          const facts = report.strings.get(entry.id);
+          const open = entry.id === activeId;
+          const level = report.findings.find((finding) => finding.string === entry.id && finding.level !== "hinweis")?.level;
+          const unit = report.inverters.find((candidate) => candidate.id === entry.inverter);
+          const placed = unit?.trackers.some((tracker) => tracker.number === entry.tracker) ?? false;
+          return (
+            <li key={entry.id} className={open ? "is-open" : ""}>
+              <button type="button" className="r3d-string" data-string={entry.name} aria-expanded={open} onClick={() => onPick(open ? null : entry.id)}>
+                <i style={{ background: entry.color }} />
+                <b>String {entry.name}</b>
+                <span>
+                  {facts?.count ?? 0} {facts?.count === 1 ? "Modul" : "Module"} · {numberText(facts?.kwp ?? 0, 2)} kWp
+                </span>
+                {level ? <em className={`is-${level}`} title={FINDING_WORDS[level]}>{level === "fehler" ? <CircleAlert size={15} /> : <TriangleAlert size={15} />}</em> : null}
+              </button>
+              {open ? (
+                <div className="r3d-string-body">
+                  <NameRow id={`r3d-name-${entry.id}`} value={entry.name} disabled={locked} onChange={(name) => onRename(entry.id, name)} />
+                  {facts && facts.vocColdV != null && facts.vmppHotV != null && facts.imppA != null && facts.iscA != null ? (
+                    <dl className="r3d-facts is-grid">
+                      <div><dt>Leerlauf bei −10 °C</dt><dd>{numberText(facts.vocColdV, 0)} V</dd></div>
+                      <div><dt>Arbeitspunkt bei 70 °C</dt><dd>{numberText(facts.vmppHotV, 0)} V</dd></div>
+                      <div><dt>Betriebsstrom</dt><dd>{numberText(facts.imppA, 1)} A</dd></div>
+                      <div><dt>Kurzschlussstrom</dt><dd>{numberText(facts.iscA, 1)} A</dd></div>
+                    </dl>
+                  ) : facts && facts.count > 0 ? (
+                    <p className="r3d-note">Spannung und Strom rechnet das Programm, sobald beim Modul im Katalog die Datenblattwerte stehen.</p>
+                  ) : null}
+                  <label className="r3d-field is-stacked">
+                    <span>Anschluss</span>
+                    <select
+                      id={`r3d-port-${entry.id}`}
+                      value={unit ? (placed ? `${unit.id}|${entry.tracker}` : `${unit.id}|`) : ""}
+                      disabled={locked || report.inverters.length === 0}
+                      onChange={(event) => {
+                        const [inverter, tracker] = event.target.value.split("|");
+                        onConnect(entry.id, inverter || null, inverter && tracker ? Number(tracker) : null);
+                      }}
+                    >
+                      <option value="">Nicht angeschlossen</option>
+                      {unit && !placed ? <option value={`${unit.id}|`}>{unit.name} · MPP-Tracker wählen</option> : null}
+                      {report.inverters.map((candidate) =>
+                        candidate.trackers.map((tracker) => (
+                          <option key={`${candidate.id}|${tracker.number}`} value={`${candidate.id}|${tracker.number}`}>
+                            {candidate.name} · MPP {tracker.number}
+                          </option>
+                        )),
+                      )}
+                    </select>
+                  </label>
+                  {report.inverters.length === 0 ? <p className="r3d-note">Unten einen Wechselrichter wählen, dann lässt sich der String anschließen.</p> : null}
+                  <div className="r3d-row">
+                    <button type="button" className="r3d-button" disabled={locked || !facts?.count} onClick={() => onClear(entry.id)}>Leeren</button>
+                    <button type="button" className="r3d-button is-danger" disabled={locked} onClick={() => onRemove(entry.id)}>
+                      <Trash2 size={15} /> Löschen
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      <button type="button" id="r3d-new-string" className="r3d-button" disabled={locked || wiring.strings.length >= WIRING_LIMITS.strings} onClick={onAdd}>
+        <Plus size={15} /> Neuer String
+      </button>
+
+      <h3>Wechselrichter</h3>
+      <ul className="r3d-units">
+        {report.inverters.map((unit) => (
+          <li key={unit.id}>
+            <div>
+              <b>{unit.name}</b>
+              <button type="button" disabled={locked} onClick={() => onRemoveInverter(unit.id)} title="Wechselrichter entfernen" aria-label={`${unit.name} entfernen`}><X size={15} /></button>
+            </div>
+            <p>
+              {numberText(unit.dcKwp, 2)} kWp{unit.acKw != null ? ` an ${numberText(unit.acKw, 1)} kW` : ""}
+              {unit.ratioPct != null ? ` · ${unit.ratioPct} %` : ""}
+            </p>
+            <ul>
+              {unit.trackers.map((tracker) => (
+                <li key={tracker.number}>
+                  <span>MPP {tracker.number}</span>
+                  <span>{tracker.strings.length === 0 ? "frei" : tracker.strings.map(nameOf).join(", ")}</span>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+      <label className="r3d-field is-stacked">
+        <span>Wechselrichter hinzufügen</span>
+        <select id="r3d-add-inverter" value="" disabled={locked || options.length === 0 || wiring.inverters.length >= WIRING_LIMITS.inverters} onChange={(event) => (event.target.value ? onAddInverter(event.target.value) : undefined)}>
+          <option value="">Aus dem Katalog wählen</option>
+          {options.map((option) => (
+            <option key={option.id} value={option.id}>{option.name}</option>
+          ))}
+        </select>
+      </label>
+      {options.length === 0 ? <p className="r3d-note">Im Katalog ist kein Wechselrichter angelegt.</p> : null}
+      <button type="button" id="r3d-distribute" className="r3d-button" disabled={locked || !waiting} onClick={onDistribute}>Strings auf MPP-Tracker verteilen</button>
+
+      <h3>Prüfung</h3>
+      {report.findings.length === 0 ? (
+        <p className="r3d-note" id="r3d-findings-none">{report.wired === 0 ? "Sobald Module in Strings liegen, steht hier, ob Spannung und Strom zum Wechselrichter passen." : "Keine Auffälligkeiten."}</p>
+      ) : (
+        <ul className="r3d-findings">
+          {report.findings.map((finding, index) => {
+            const Icon = FINDING_ICONS[finding.level];
+            return (
+              <li key={index} className={`is-${finding.level}`}>
+                <Icon size={15} aria-label={FINDING_WORDS[finding.level]} />
+                <span>{finding.text}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="r3d-note is-below">Gerechnet mit den Datenblattwerten aus dem Katalog bei −10 °C und 70 °C Zelltemperatur. Die Prüfung ersetzt nicht die Auslegung mit dem Werkzeug des Herstellers.</p>
+    </aside>
+  );
+}
+
+/** Namensfeld eines Strings. Ein leeres Feld ändert nichts, beim Verlassen steht wieder der gültige Name da. */
+function NameRow({ id, value, disabled, onChange }: { id: string; value: string; disabled: boolean; onChange: (value: string) => void }) {
+  const [text, setText] = useState(value);
+  const [known, setKnown] = useState(value);
+  if (known !== value) {
+    setKnown(value);
+    if (text.trim() !== value) setText(value);
+  }
+  return (
+    <label className="r3d-field" htmlFor={id}>
+      <span>Name</span>
+      <input
+        id={id}
+        className="r3d-text"
+        type="text"
+        value={text}
+        maxLength={12}
+        disabled={disabled}
+        onChange={(event) => {
+          setText(event.target.value);
+          const next = event.target.value.trim();
+          if (next !== "" && next !== value) onChange(next);
+        }}
+        onBlur={() => setText(value)}
+      />
+    </label>
   );
 }
 

@@ -187,19 +187,24 @@ export function planSummary(topic: PlanTopic, variant: VariantDTO, result: CalcR
   return { value: count > 0 ? formatEuro(net) : "", detail: count > 0 ? `${items}, netto` : "", filled: count > 0 };
 }
 
-export type SolarProgress = { roof: boolean; layout: boolean; modules: boolean; inverter: boolean };
+export type SolarProgress = { roof: boolean; layout: boolean; modules: boolean; inverter: boolean; strings: boolean };
 
 /**
  * Was an der Photovoltaik schon steht: Gebäude in der 3D-Planung, Module auf dem Dach belegt,
- * Module und Wechselrichter in den Positionen.
+ * Module und Wechselrichter in den Positionen, und ob die Verschaltung vollständig ist.
  */
 export function solarProgress(variant: VariantDTO): SolarProgress {
   const has = (section: string) => variant.lines.some((line) => line.section === section && line.quantity > 0);
+  const layout = variant.faces.some((face) => Boolean(face.geometry?.placement) && activeModuleCount(face.geometry) > 0);
+  /* Vollständig heißt: jedes gelegte Modul hängt in einem String, und jeder dieser Strings an einem MPP-Tracker. */
+  const connected = new Set((variant.planning?.strings ?? []).filter((entry) => entry.inverter != null && entry.tracker != null).map((entry) => entry.id));
+  const placed = variant.faces.flatMap((face) => (face.geometry?.placement ? face.geometry.modules.filter((module) => module.active) : []));
   return {
     roof: variant.faces.some((face) => (face.geometry?.ring.length ?? 0) >= 3),
-    layout: variant.faces.some((face) => Boolean(face.geometry?.placement) && activeModuleCount(face.geometry) > 0),
+    layout,
     modules: has("module"),
     inverter: has("inverter"),
+    strings: layout && placed.every((module) => module.string != null && connected.has(module.string)),
   };
 }
 

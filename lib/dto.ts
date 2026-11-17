@@ -2,6 +2,7 @@ import type { CatalogItem, Offer, OfferLine, OfferVariant, RoofFace } from "@pri
 import { asSpecs, type CatalogOption, type LineDTO, type OfferDTO, type VariantDTO } from "@/lib/domain";
 import { normalizeMounting } from "@/lib/pvgis/types";
 import { parseRoofGeometry } from "@/lib/roof/parse";
+import { parsePlanning } from "@/lib/roof3d/strings";
 import { isoDateInput } from "@/lib/format";
 import { parseTenantPower } from "@/lib/tenant-power";
 
@@ -82,6 +83,7 @@ export function toVariantDTO(variant: OfferVariant & { lines: OfferLine[]; faces
     yieldMonthlyKwh: monthlyOf(variant.yieldMonthlyKwh),
     yieldNotice: variant.yieldNotice,
     yieldKey: variant.yieldKey,
+    planning: parsePlanning(variant.planning),
     lines: [...variant.lines].sort((a, b) => a.sortOrder - b.sortOrder).map(toLineDTO),
   };
 }

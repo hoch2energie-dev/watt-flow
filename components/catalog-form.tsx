@@ -132,7 +132,7 @@ export function CatalogForm({
                 </select>
               ) : field.kind === "number" ? (
                 <NumberField
-                  digits={field.key === "scop" || field.key === "efficiencyPercent" ? 1 : 0}
+                  digits={field.digits ?? (field.key === "scop" || field.key === "efficiencyPercent" ? 1 : 0)}
                   value={typeof specs[field.key] === "number" ? (specs[field.key] as number) : 0}
                   onChange={(value) => setSpecs({ ...specs, [field.key]: value })}
                 />

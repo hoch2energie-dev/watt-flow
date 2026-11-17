@@ -7,7 +7,7 @@ import { PDF_PAGE_LABELS } from "@/lib/content";
 import type { OfferDTO, VariantDTO } from "@/lib/domain";
 import { formatDate, formatEuro, formatNumber, formatPercent } from "@/lib/format";
 import { PAYMENT_LABEL } from "@/lib/labels";
-import { drawRoofPlan } from "@/lib/pdf/roof-plan";
+import { drawRoofPlan, type RoofPlanString } from "@/lib/pdf/roof-plan";
 import { PVGIS_SOURCE_NOTE, type RoofFaceInput } from "@/lib/pvgis/types";
 import { activeModuleCount } from "@/lib/roof/types";
 
@@ -243,7 +243,7 @@ export function renderOfferPdf(model: PdfModel): Promise<Buffer> {
         paragraph(active.variant.faces.map(faceLine).join(" · "));
       }
     }
-    drawRoofPlan(doc, active.variant.faces, { brand, ink, muted, accent });
+    drawRoofPlan(doc, active.variant.faces, { brand, ink, muted, accent }, planStrings(active.variant));
   };
 
   const faceLine = (face: RoofFaceInput) => {
@@ -427,4 +427,21 @@ export function renderOfferPdf(model: PdfModel): Promise<Buffer> {
 
   doc.end();
   return done;
+}
+
+/** Strings der 3D-Planung für die Seite Dachbelegung: Name, Farbe und der Anschluss als Text. */
+function planStrings(variant: VariantDTO): RoofPlanString[] {
+  const planning = variant.planning;
+  if (!planning) return [];
+  const unitName = (id: string | null): string => {
+    const position = planning.inverters.findIndex((unit) => unit.id === id);
+    if (position < 0) return "";
+    const line = variant.lines.find((entry) => entry.catalogItemId === planning.inverters[position].catalogItemId);
+    return `${line?.name ?? "Wechselrichter"}${planning.inverters.length > 1 ? ` (${position + 1})` : ""}`;
+  };
+  return planning.strings.map((entry) => {
+    const unit = unitName(entry.inverter);
+    /* Der Tracker steht vorn: Wird die Zeile gekürzt, fehlt das Ende des Gerätenamens und nicht die Nummer. */
+    return { id: entry.id, name: entry.name, color: entry.color, port: unit ? `${entry.tracker != null ? `MPP ${entry.tracker} an ` : ""}${unit}` : "" };
+  });
 }

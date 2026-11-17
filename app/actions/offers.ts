@@ -156,6 +156,7 @@ export async function saveOffer(input: unknown) {
         yieldMonthlyKwh: variant.yieldMonthlyKwh ?? Prisma.JsonNull,
         yieldNotice: variant.yieldNotice,
         yieldKey: variant.yieldKey,
+        planning: variant.planning ? (variant.planning as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
         yieldCalculatedAt: variant.yieldProvider === "pvgis" ? new Date() : null,
       };
       await tx.offerVariant.upsert({ where: { id: variant.id }, create: { id: variant.id, ...data }, update: data });

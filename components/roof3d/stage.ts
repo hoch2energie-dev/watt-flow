@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { pointInPolygon, polygonArea, signedArea, type XY } from "@/lib/roof/geo";
+import { centroidXY, pointInPolygon, polygonArea, signedArea, type XY } from "@/lib/roof/geo";
 import { buildRoof, edgeLengths, type BuildingSpec, type Point3, type RoofModel } from "@/lib/roof3d/building";
 import {
   CONTROL_DEFAULTS,
@@ -36,11 +36,12 @@ import {
   type ObstacleShape,
   type ObstacleSpec,
 } from "@/lib/roof3d/plans";
+import type { StringSpec } from "@/lib/roof3d/strings";
 
 export type Tool = "select" | "draw" | ObstacleKind;
-export type Step = "gebaeude" | "module";
-/** Was gewählt ist: ein Gebäude, darin eine Dachfläche (nach Kante) oder ein Aufbau. */
-export type Selection = { id: string | null; edge: number | null; obstacle: string | null };
+export type Step = "gebaeude" | "module" | "strings";
+/** Was gewählt ist: ein Gebäude, darin eine Dachfläche (nach Kante) oder ein Aufbau. Im Schritt Strings dazu der String, an dem gearbeitet wird. */
+export type Selection = { id: string | null; edge: number | null; obstacle: string | null; string?: string | null };
 export const NO_SELECTION: Selection = { id: null, edge: null, obstacle: null };
 
 export type ViewInfo = { headingDeg: number; tiltDeg: number; distM: number };
@@ -57,6 +58,12 @@ export type StageEvents = {
   onResizeObstacle(id: string, edge: number, obstacle: string, shape: ObstacleShape, done: boolean): void;
   /** Plätze des Modulrasters belegen oder leeren. Genannt sind alle Plätze des laufenden Strichs; eine leere Liste verwirft ihn. */
   onPaint(id: string, edge: number, indexes: number[], active: boolean, done: boolean): void;
+  /**
+   * Module einem String zuordnen (`erase` falsch) oder herausnehmen. Genannt sind alle Plätze des laufenden
+   * Strichs in der Reihenfolge der Berührung; eine leere Liste verwirft ihn. `target` ist der String,
+   * `null` heißt: Dieser Strich beginnt einen neuen.
+   */
+  onWire(id: string, edge: number, indexes: number[], target: string | null, erase: boolean, done: boolean): void;
   onDraft(points: number): void;
   onView(info: ViewInfo): void;
   onGroundError(): void;
@@ -73,6 +80,7 @@ type Press = {
     | { kind: "resize"; id: string; edge: number; obstacle: ObstacleSpec; grip: Grip; shape: ObstacleShape | null }
     | { kind: "place"; id: string; edge: number; tool: ObstacleKind; from: XY; shape: ObstacleShape | null }
     | { kind: "paint"; id: string; edge: number; active: boolean; seen: number[] }
+    | { kind: "wire"; id: string; edge: number; target: string | null; erase: boolean; seen: number[] }
     | null;
   current: XY[] | null;
 };
@@ -102,6 +110,9 @@ export class Stage {
   private roofMaterial = new THREE.MeshLambertMaterial({ color: 0x2f3438, side: THREE.DoubleSide });
   private wallMaterial = new THREE.MeshLambertMaterial({ color: 0xf1ebe0, side: THREE.DoubleSide });
   private moduleMaterial = new THREE.MeshLambertMaterial({ color: 0x1b3f63, side: THREE.DoubleSide });
+  /** Schritt Strings: Module ohne String, und je Stringfarbe ein Material. */
+  private freeMaterial = new THREE.MeshLambertMaterial({ color: 0x5c6b78, side: THREE.DoubleSide });
+  private stringMaterials = new Map<string, THREE.MeshLambertMaterial>();
   private frameMaterial = new THREE.LineBasicMaterial({ color: 0xb4cde0 });
   private chimneyMaterial = new THREE.MeshLambertMaterial({ color: 0xb9b2a6, side: THREE.DoubleSide });
   private windowMaterial = new THREE.MeshLambertMaterial({ color: 0x7f97a6, side: THREE.DoubleSide });
@@ -117,6 +128,7 @@ export class Stage {
   private buildings: BuildingSpec[] = [];
   private models = new Map<string, RoofModel>();
   private selection: Selection = NO_SELECTION;
+  private strings: StringSpec[] = [];
   private step: Step = "gebaeude";
   private draft: XY[] = [];
   private hover: SnapResult | null = null;
@@ -176,17 +188,35 @@ export class Stage {
     this.ground.geometry.dispose();
     this.ground.material.map?.dispose();
     this.ground.material.dispose();
+    for (const material of this.stringMaterials.values()) material.dispose();
     this.renderer.dispose();
   }
 
   /* ---------- Zustand von außen ---------- */
 
-  setBuildings(buildings: BuildingSpec[], selection: Selection) {
+  setBuildings(buildings: BuildingSpec[], selection: Selection, strings: StringSpec[] = []) {
     this.buildings = buildings;
     this.selection = selection;
+    this.strings = strings;
     this.models = new Map(buildings.map((building) => [building.id, buildRoof(building)]));
+    this.rebuild();
+  }
+
+  private stringMaterial(color: string): THREE.MeshLambertMaterial {
+    let material = this.stringMaterials.get(color);
+    if (!material) {
+      material = new THREE.MeshLambertMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide });
+      this.stringMaterials.set(color, material);
+    }
+    return material;
+  }
+
+  /** Baut die Körper der Szene neu. Im Schritt Strings tragen die Module die Farbe ihres Strings. */
+  private rebuild() {
+    const wiring = this.step === "strings";
+    const colors = new Map(this.strings.map((entry) => [entry.id, entry.color]));
     this.clearGroup();
-    for (const building of buildings) {
+    for (const building of this.buildings) {
       const model = this.models.get(building.id);
       if (!model) continue;
       const add = (polygons: Point3[][], material: THREE.Material, tag: Omit<MeshTag, "id">) => {
@@ -198,13 +228,20 @@ export class Stage {
       add(model.faces.map((face) => face.ring), this.roofMaterial, { kind: "roof" });
       add(model.walls, this.wallMaterial, { kind: "wall" });
       const panels: Point3[][] = [];
+      const wired = new Map<string, Point3[][]>();
       const flats: Record<"sperrzone" | "fenster", Point3[][]> = { sperrzone: [], fenster: [] };
       for (const face of model.faces) {
         const plan = building.plans?.[face.edge];
         if (!plan) continue;
         const frame = faceFrame(building, face);
         const lift = (point: XY, above: number): Point3 => [point[0], point[1], heightOnFace(frame, point) + above];
-        for (const cell of plan.modules) if (cell.active) panels.push(cell.corners.map((corner) => lift(corner, 0.07)));
+        for (const cell of plan.modules) {
+          if (!cell.active) continue;
+          const panel = cell.corners.map((corner) => lift(corner, 0.07));
+          panels.push(panel);
+          const color = wiring && cell.string ? colors.get(cell.string) : undefined;
+          if (color) wired.set(color, [...(wired.get(color) ?? []), panel]);
+        }
         for (const obstacle of plan.obstacles) {
           const ring = obstacleRing(frame, obstacle);
           if (obstacle.kind !== "kamin") {
@@ -221,7 +258,11 @@ export class Stage {
           add(body, this.chimneyMaterial, { kind: "kamin", edge: face.edge, obstacle: obstacle.id });
         }
       }
-      add(panels, this.moduleMaterial, { kind: "module" });
+      if (wiring) {
+        const taken = new Set([...wired.values()].flat());
+        add(panels.filter((panel) => !taken.has(panel)), this.freeMaterial, { kind: "module" });
+        for (const [color, list] of wired) add(list, this.stringMaterial(color), { kind: "module" });
+      } else add(panels, this.moduleMaterial, { kind: "module" });
       if (panels.length > 0) {
         /* Rahmenlinien, damit in der räumlichen Ansicht jedes Modul einzeln zu erkennen ist. */
         const frames = new THREE.LineSegments(framesOf(panels, 0.012), this.frameMaterial);
@@ -234,8 +275,9 @@ export class Stage {
   }
 
   setStep(step: Step) {
+    if (step === this.step) return;
     this.step = step;
-    this.dirty = true;
+    this.rebuild();
   }
 
   setTool(tool: Tool) {
@@ -502,6 +544,18 @@ export class Stage {
     /* Ein Aufbau lässt sich in beiden Schritten und beiden Ansichten greifen und verschieben. */
     const held = spot?.obstacle && spot.edge != null ? spot.building.plans?.[spot.edge]?.obstacles.find((entry) => entry.id === spot.obstacle) : null;
     const move: Press["drag"] = spot && held && spot.edge != null ? { kind: "obstacle", id: spot.building.id, edge: spot.edge, obstacle: held.id, base: held.center, from: spot.point, center: null } : null;
+    if (this.step === "strings") {
+      /*
+       * Ein freies Modul beginnt einen Strich: Es kommt an den gewählten String, ohne gewählten String entsteht ein neuer.
+       * Ein Modul des gewählten Strings beginnt das Herausnehmen. Ein Modul eines anderen Strings wählt ihn nur aus (siehe pick).
+       */
+      const wire = this.wireAt(spot);
+      if (!spot || spot.edge == null || !wire || (wire.string != null && wire.string !== (this.selection.string ?? null))) return null;
+      const erase = wire.string != null;
+      const target = erase ? wire.string : this.selection.string ?? null;
+      this.events.onWire(spot.building.id, spot.edge, [wire.index], target, erase, false);
+      return { kind: "wire", id: spot.building.id, edge: spot.edge, target, erase, seen: [wire.index] };
+    }
     if (this.step === "module") {
       if (move) return move;
       /* Belegt wird nur auf der gewählten Fläche. Ein Klick auf eine andere Fläche wählt sie erst aus. */
@@ -532,12 +586,25 @@ export class Stage {
     return pointInPolygon(from, outline) ? { kind: "move", base: outline, from } : null;
   }
 
+  /** Belegtes Modul unter dem Mauszeiger mit seinem String, falls es einen hat. */
+  private wireAt(spot: Spot | null): { index: number; string: string | null } | null {
+    if (!spot || spot.edge == null) return null;
+    const plan = spot.building.plans?.[spot.edge];
+    const index = cellAt(plan, spot.point);
+    const cell = index >= 0 ? plan?.modules[index] : undefined;
+    return cell?.active ? { index, string: cell.string ?? null } : null;
+  }
+
   private onPointer = (event: PointerEvent) => {
     if ((event.buttons & 3) === 3) {
       /* Beide Tasten heißen Drehen. Ein Belegen, das mit der linken Taste schon begonnen hat, wird verworfen. */
       const drag = this.press?.drag;
       if (this.press && drag?.kind === "paint") {
         this.events.onPaint(drag.id, drag.edge, [], drag.active, true);
+        this.press.drag = null;
+      }
+      if (this.press && drag?.kind === "wire") {
+        this.events.onWire(drag.id, drag.edge, [], drag.target, drag.erase, true);
         this.press.drag = null;
       }
       if (this.press && drag?.kind === "place") {
@@ -575,7 +642,8 @@ export class Stage {
     } else if (this.mode === "idle" && this.tool === "select") {
       /* Der Mauszeiger sagt, was ein Druck hier täte: Griff ziehen oder Aufbau verschieben. */
       const spot = this.spotAt(event.clientX, event.clientY);
-      this.canvas.style.cursor = this.gripAt(event.clientX, event.clientY, spot) ? "pointer" : spot?.obstacle ? "move" : this.restCursor();
+      if (this.step === "strings") this.canvas.style.cursor = this.wireAt(spot) ? "pointer" : this.restCursor();
+      else this.canvas.style.cursor = this.gripAt(event.clientX, event.clientY, spot) ? "pointer" : spot?.obstacle ? "move" : this.restCursor();
     }
     this.last = { x: event.clientX, y: event.clientY };
   };
@@ -615,6 +683,17 @@ export class Stage {
       this.events.onPaint(drag.id, drag.edge, drag.seen.slice(), drag.active, false);
       return;
     }
+    if (drag.kind === "wire") {
+      const plan = building.plans?.[drag.edge];
+      const index = cellAt(plan, to);
+      const cell = index >= 0 ? plan?.modules[index] : undefined;
+      if (!cell?.active || drag.seen.includes(index)) return;
+      /* Anhängen nimmt nur freie Module mit, Herausnehmen nur Module dieses Strings. */
+      if (drag.erase ? cell.string !== drag.target : cell.string != null) return;
+      drag.seen.push(index);
+      this.events.onWire(drag.id, drag.edge, drag.seen.slice(), drag.target, drag.erase, false);
+      return;
+    }
     if (press.moved < 4) return;
     const step = event.shiftKey ? 0 : 0.05;
     if (drag.kind === "obstacle") {
@@ -642,6 +721,7 @@ export class Stage {
     if (event.buttons !== 0) return;
     const drag = press?.drag;
     if (drag?.kind === "paint") this.events.onPaint(drag.id, drag.edge, drag.seen, drag.active, true);
+    else if (drag?.kind === "wire") this.events.onWire(drag.id, drag.edge, drag.seen, drag.target, drag.erase, true);
     else if (drag?.kind === "obstacle" && drag.center) this.events.onMoveObstacle(drag.id, drag.edge, drag.obstacle, drag.center, true);
     else if (drag?.kind === "resize" && drag.shape) this.events.onResizeObstacle(drag.id, drag.edge, drag.obstacle.id, drag.shape, true);
     else if (drag?.kind === "place") {
@@ -680,6 +760,11 @@ export class Stage {
 
   private pick(event: PointerEvent): Selection {
     const spot = this.spotAt(event.clientX, event.clientY);
+    if (this.step === "strings") {
+      /* Ein verstringtes Modul wählt seinen String. Ein Klick daneben lässt den String los, der nächste Strich beginnt dann einen neuen. */
+      if (!spot || spot.edge == null) return { ...this.selection, obstacle: null, string: null };
+      return { id: spot.building.id, edge: spot.edge, obstacle: null, string: this.wireAt(spot)?.string ?? null };
+    }
     /* Im Schritt Module bleibt die Dachseite gewählt, wenn der Klick danebengeht. */
     const keep = this.step === "module" ? this.selection : NO_SELECTION;
     if (!spot) return keep;
@@ -777,7 +862,8 @@ export class Stage {
         const model = this.models.get(building.id);
         if (!model) continue;
         const chosen = building.id === this.selection.id;
-        const planning = this.step === "module";
+        const planning = this.step !== "gebaeude";
+        const colors = this.step === "strings" ? new Map(this.strings.map((entry) => [entry.id, entry.color])) : null;
         for (const face of model.faces) {
           const here = chosen && (!planning || this.selection.edge === face.edge);
           parts.push(`<polygon class="r3d-face${here ? " is-selected" : ""}" points="${path(face.ring.map((point): XY => [point[0], point[1]]))}"/>`);
@@ -787,9 +873,12 @@ export class Stage {
           const plan = building.plans?.[face.edge];
           if (!plan) continue;
           const frame = faceFrame(building, face);
-          const open = planning && chosen && this.selection.edge === face.edge;
+          const open = this.step === "module" && chosen && this.selection.edge === face.edge;
           for (const cell of plan.modules) {
-            if (cell.active) parts.push(`<polygon class="r3d-module" points="${path(cell.corners)}"/>`);
+            if (cell.active && colors) {
+              const color = cell.string ? colors.get(cell.string) : undefined;
+              parts.push(color ? `<polygon class="r3d-module is-wired" style="fill:${color}" points="${path(cell.corners)}"/>` : `<polygon class="r3d-module is-free" points="${path(cell.corners)}"/>`);
+            } else if (cell.active) parts.push(`<polygon class="r3d-module" points="${path(cell.corners)}"/>`);
             else if (open) {
               const a = this.screen(cell.corners[0]);
               const c = this.screen(cell.corners[2]);
@@ -822,7 +911,7 @@ export class Stage {
     if (!topDown && this.tiltGoal == null) {
       /* Räumliche Ansicht: das gewählte Dach bekommt Umrisslinien, auch durch das Gebäude hindurch. */
       const model = this.selection.id ? this.models.get(this.selection.id) : null;
-      const only = this.step === "module" ? this.selection.edge : null;
+      const only = this.step !== "gebaeude" ? this.selection.edge : null;
       for (const face of model?.faces ?? []) {
         if (only != null && face.edge !== only) continue;
         const corners = face.ring.map((point) => this.screen([point[0], point[1]], point[2]));
@@ -830,7 +919,7 @@ export class Stage {
       }
       /* Schritt Module: freie Plätze der gewählten Dachseite, solange man von oben auf sie schaut. */
       const building = this.selected();
-      const plan = only != null ? building?.plans?.[only] : undefined;
+      const plan = only != null && this.step === "module" ? building?.plans?.[only] : undefined;
       const frame = building && only != null ? this.frameOf(building, only) : null;
       if (plan && frame && this.facing(frame)) {
         for (const cell of plan.modules) {
@@ -843,6 +932,7 @@ export class Stage {
         }
       }
     }
+    if (this.tiltGoal == null && this.step === "strings") parts.push(...this.wireMarkup());
     if (this.tiltGoal == null) parts.push(...this.editMarkup(!topDown));
     if (this.tool === "draw" && this.draft.length > 0) {
       const tip = this.hover?.point ?? null;
@@ -881,6 +971,54 @@ export class Stage {
     return parts.join("");
   }
 
+  /**
+   * Schritt Strings: je String eine Linie durch die Module in der Reihenfolge der Verschaltung, dazu die
+   * Beschriftung A1, A2 und so weiter. Gilt in beiden Ansichten; räumlich nur für Dachseiten, auf die man von oben schaut.
+   */
+  private wireMarkup(): string[] {
+    const stops = new Map<string, { order: number; x: number; y: number }[]>();
+    for (const building of this.buildings) {
+      for (const face of this.models.get(building.id)?.faces ?? []) {
+        const plan = building.plans?.[face.edge];
+        if (!plan) continue;
+        const frame = faceFrame(building, face);
+        if (!this.facing(frame)) continue;
+        for (const cell of plan.modules) {
+          if (!cell.active || !cell.string) continue;
+          const at = this.at(centroidXY(cell.corners), frame, 0.1);
+          if (!at.visible) continue;
+          const list = stops.get(cell.string) ?? [];
+          list.push({ order: cell.order ?? 0, x: at.x, y: at.y });
+          stops.set(cell.string, list);
+        }
+      }
+    }
+    const parts: string[] = [];
+    const labels: string[] = [];
+    for (const spec of this.strings) {
+      const list = (stops.get(spec.id) ?? []).sort((a, b) => a.order - b.order);
+      if (list.length === 0) continue;
+      const chosen = spec.id === this.selection.string;
+      if (list.length > 1) {
+        const points = list.map((stop) => `${stop.x.toFixed(1)},${stop.y.toFixed(1)}`).join(" ");
+        parts.push(`<polyline class="r3d-wire is-back${chosen ? " is-selected" : ""}" points="${points}"/><polyline class="r3d-wire${chosen ? " is-selected" : ""}" data-string="${spec.name}" style="stroke:${spec.color}" points="${points}"/>`);
+      }
+      /*
+       * Kurze Namen stehen mit der Stelle am Modul: A1, A2. Ein längerer Name steht nur am ersten Modul, die übrigen tragen ihre Stelle.
+       * Liegen die Module im Bild zu dicht, steht nur am ersten der Name des Strings.
+       */
+      const short = /^[A-Za-zÄÖÜäöü]{1,2}$/.test(spec.name);
+      let tight = false;
+      for (let index = 1; index < list.length && !tight; index += 1) tight = Math.hypot(list[index].x - list[index - 1].x, list[index].y - list[index - 1].y) < 22;
+      list.forEach((stop, index) => {
+        if (tight && index > 0) return;
+        const text = tight || (!short && index === 0) ? escapeText(spec.name) : short ? `${escapeText(spec.name)}${stop.order}` : String(stop.order);
+        labels.push(`<text class="r3d-wire-no${chosen ? " is-selected" : ""}" x="${stop.x.toFixed(1)}" y="${(stop.y + 4).toFixed(1)}" text-anchor="middle">${text}</text>`);
+      });
+    }
+    return [...parts, ...labels];
+  }
+
   /** Auswahlrahmen, Griffe und Maß des gewählten Aufbaus, dazu die Vorschau beim Aufziehen. Gilt in beiden Ansichten. */
   private editMarkup(spatial: boolean): string[] {
     const parts: string[] = [];
@@ -917,6 +1055,11 @@ export class Stage {
     if (!obstacle.shape) parts.push(below(ring, sizeText(obstacle)));
     return parts;
   }
+}
+
+/** Namen von Strings gibt der Nutzer ein. Sie landen als Text im SVG und dürfen dort nichts anderes sein. */
+function escapeText(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
 function sizeText(shape: { widthM: number; lengthM: number }): string {

@@ -8,7 +8,7 @@ import { roofsFromCityJson } from "@/lib/roof/lod2";
 import { parseRoofGeometry } from "@/lib/roof/parse";
 import { buildScene } from "@/lib/roof/scene";
 import { applyShading, combinedLosses, horizonLossPercent, obstacleLossPercent } from "@/lib/roof/shading";
-import { syncModuleLines } from "@/lib/roof/sync";
+import { inverterLines, syncInverterLines, syncModuleLines } from "@/lib/roof/sync";
 import { blankGeometry } from "@/lib/roof/types";
 import type { RoofFaceInput } from "@/lib/pvgis/types";
 import type { CatalogOption, LineDTO } from "@/lib/domain";
@@ -209,6 +209,37 @@ describe("Rückgabe in die Variante", () => {
     expect(lines[0].unitPriceNet).toBe(180);
   });
 
+  it("setzt die Wechselrichter-Positionen auf die Geräte der Planung", () => {
+    const item = (id: string, name: string, price: number): CatalogOption => ({ id, typeKey: "inverter", manufacturer: "Beispiel", model: name, name, unit: "Stk", purchasePriceNet: price - 400, salesPriceNet: price, vatCategory: "PV_NULL", specs: { acPowerKw: 10 }, description: null, active: true });
+    const catalog = [item("w10", "Wechselrichter 10 kW", 1900), item("w6", "Wechselrichter 6 kW", 1400)];
+    const line = (id: string, catalogItemId: string | null, typeKey: string | null, name: string, unitPriceNet: number): LineDTO => ({ id, catalogItemId, typeKey, section: "inverter", name, description: null, quantity: 1, unit: "Stk", unitPriceNet, purchasePriceNet: 1, discountPercent: 0, vatCategory: "PV_NULL", specs: {}, sortOrder: 0 });
+    const offer = [line("l1", "w10", "inverter", "Wechselrichter 10 kW", 1750), line("l2", null, null, "Freie Position", 50), line("l3", "o1", "optimizer", "Optimierer", 60)];
+    const units = (...ids: string[]) => ids.map((catalogItemId) => ({ catalogItemId }));
+
+    /* Ohne Geräte in der Planung bleibt alles, wie es ist. */
+    expect(syncInverterLines(offer, [], catalog)).toBe(offer);
+    /* Dasselbe Gerät: nur die Stückzahl folgt, der von Hand gesetzte Preis bleibt. */
+    const twice = syncInverterLines(offer, units("w10", "w10"), catalog);
+    expect(twice.map((entry) => [entry.id, entry.quantity, entry.unitPriceNet])).toEqual([["l1", 2, 1750], ["l2", 1, 50], ["l3", 1, 60]]);
+    /* Ein anderer einzelner Typ tritt an die Stelle des bisherigen Wechselrichters. Freie Position und Optimierer bleiben. */
+    const swapped = syncInverterLines(offer, units("w6"), catalog);
+    expect(swapped.map((entry) => [entry.id, entry.catalogItemId, entry.name, entry.quantity, entry.unitPriceNet])).toEqual([
+      ["l1", "w6", "Wechselrichter 6 kW", 1, 1400],
+      ["l2", null, "Freie Position", 1, 50],
+      ["l3", "o1", "Optimierer", 1, 60],
+    ]);
+    /* Zwei Typen: der vorhandene bleibt, der zweite kommt als Zeile dazu. */
+    const both = syncInverterLines(offer, units("w10", "w6", "w6"), catalog);
+    expect(both).toHaveLength(4);
+    expect(both[3]).toMatchObject({ catalogItemId: "w6", typeKey: "inverter", section: "inverter", quantity: 2, unitPriceNet: 1400 });
+    expect(inverterLines(both).map((entry) => entry.catalogItemId)).toEqual(["w10", "w6"]);
+    /* Ein Gerät, das im Katalog fehlt, lässt sich nicht als Position anlegen. */
+    expect(syncInverterLines(offer, units("fort"), catalog).map((entry) => entry.catalogItemId)).toEqual(["w10", null, "o1"]);
+    /* Noch kein Wechselrichter im Angebot: Es entsteht eine neue Zeile. */
+    expect(syncInverterLines([], units("w6"), catalog)).toMatchObject([{ catalogItemId: "w6", section: "inverter", quantity: 1 }]);
+    expect(offer[0].quantity).toBe(1);
+  });
+
   it("behält eine gültige Geometrie und verwirft eine andere Fassung", () => {
     const parsed = parseRoofGeometry({
       version: 1,
@@ -262,10 +293,24 @@ describe("Rückgabe in die Variante", () => {
       geometry: {
         ...blankGeometry(ring([[-4, -3], [4, -3], [4, 3], [-4, 3]])),
         shading: { systemLossPercent: 14, obstacleLossPercent: 3.1, horizonLossPercent: 0 },
-        modules: [{ corners: [[-1, -1], [1, -1], [1, 1], [-1, 1]], active: true }],
+        placement: { catalogItemId: "mod", powerWp: 440, widthM: 1.134, heightM: 1.762, portrait: true, setbackM: 0.3, gapM: 0.02 },
+        modules: [
+          { corners: [[-1, -1], [1, -1], [1, 1], [-1, 1]], active: true, string: "a", order: 2 },
+          { corners: [[1, -1], [3, -1], [3, 1], [1, 1]], active: true, string: "a", order: 1 },
+          { corners: [[-3, -1], [-1, -1], [-1, 1], [-3, 1]], active: true },
+          { corners: [[-3, 1], [-1, 1], [-1, 3], [-3, 3]], active: false },
+        ],
       },
     };
-    drawRoofPlan(doc, [planned], { brand: "#1e5c42", ink: "#1c2622", muted: "#5c6b64", accent: "#c65b2e" });
+    const colors = { brand: "#1e5c42", ink: "#1c2622", muted: "#5c6b64", accent: "#c65b2e" };
+    drawRoofPlan(doc, [planned], colors);
+    /* Mit Strings: eingefärbte Module, die Linie in der Reihenfolge und die Liste der Verschaltung. Ein String ohne Module steht nicht in der Liste. */
+    const strings = [
+      { id: "a", name: "A", color: "#f2a516", port: "MPP 1 an Wechselrichter 10 kW" },
+      { id: "leer", name: "B", color: "#3fb6e8", port: "" },
+      ...Array.from({ length: 30 }, (_, index) => ({ id: `x${index}`, name: `X${index}`, color: "#7ccf5a", port: "" })),
+    ];
+    drawRoofPlan(doc, [planned], colors, strings);
     doc.end();
     const buffer = await done;
     expect(buffer.length).toBeGreaterThan(1000);

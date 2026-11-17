@@ -1,21 +1,27 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { saveOffer } from "@/app/actions/offers";
 import { locateAddress } from "@/app/actions/roof";
 import { calculatePvgis } from "@/app/actions/yield";
-import { Planner3D, type GroundSource, type ModuleOption } from "@/components/roof3d/planner3d";
+import { Planner3D, type GroundSource, type InverterOption, type ModuleOption, type PlanState } from "@/components/roof3d/planner3d";
 import { resolveKwp } from "@/lib/calc/offer";
 import { toCalcInput, type CatalogOption, type OfferDTO, type VariantDTO } from "@/lib/domain";
 import { formatNumber } from "@/lib/format";
 import type { LngLat } from "@/lib/roof/geo";
-import { moduleSize, syncModuleLines } from "@/lib/roof/sync";
+import { inverterLines, moduleSize, syncInverterLines, syncModuleLines } from "@/lib/roof/sync";
 import { activeModuleCount } from "@/lib/roof/types";
 import { AERIAL_SIZE_M, aerialSources } from "@/lib/roof3d/aerial";
-import type { BuildingSpec } from "@/lib/roof3d/building";
 import { MAX_FACES, buildingsFromFaces, facesFromBuildings, resetFaces } from "@/lib/roof3d/faces";
+import { WIRING_LIMITS, inverterElectricalOf, membership, moduleElectricalOf, type InverterUnit, type VariantPlanning, type Wiring } from "@/lib/roof3d/strings";
 
 type Place = { latitude: number | null; longitude: number | null; label: string; source: string };
+
+/** Dieselben Geräte in derselben Stückzahl? Die Reihenfolge spielt keine Rolle. */
+function sameUnits(a: InverterUnit[], b: InverterUnit[]): boolean {
+  const key = (list: InverterUnit[]) => list.map((unit) => unit.catalogItemId).sort().join("|");
+  return key(a) === key(b);
+}
 
 /** Die 3D-Planung an einem Angebot: lädt die Gebäude einer Variante und speichert sie als Dachflächen zurück. */
 export function OfferPlanner3D({
@@ -67,26 +73,54 @@ export function OfferPlanner3D({
         .filter((item) => item.typeKey === "pv_module" && item.active)
         .flatMap((item) => {
           const size = moduleSize(item.specs);
-          return size ? [{ id: item.id, name: item.name, ...size }] : [];
+          return size ? [{ id: item.id, name: item.name, ...size, electrical: moduleElectricalOf(item.specs) }] : [];
         }),
     [catalog],
   );
+  const inverters = useMemo<InverterOption[]>(
+    () => catalog.filter((item) => item.typeKey === "inverter" && item.active).map((item) => ({ id: item.id, name: item.name, data: inverterElectricalOf(item.name, item.specs) })),
+    [catalog],
+  );
+  /*
+   * Strings und Wechselrichter der Variante. Ohne gespeicherte Planung stehen die Wechselrichter aus den
+   * Positionen des Angebots schon bereit, damit man sie nicht ein zweites Mal wählen muss.
+   */
+  const firstWiring = useMemo<Wiring>(() => {
+    if (!variant) return { inverters: [], strings: [] };
+    if (variant.planning) return { inverters: variant.planning.inverters, strings: variant.planning.strings };
+    const units = inverterLines(variant.lines).flatMap((line) =>
+      Array.from({ length: Math.min(Math.round(line.quantity), WIRING_LIMITS.inverters) }, (_, index): InverterUnit => ({ id: `wr:${line.id}:${index + 1}`.slice(0, 60), catalogItemId: line.catalogItemId ?? "" })),
+    );
+    return { inverters: units.slice(0, WIRING_LIMITS.inverters), strings: [] };
+  }, [variant?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* Die Wechselrichter, auf denen die Positionen des Angebots zuletzt standen. */
+  const syncedUnits = useRef(firstWiring.inverters);
 
   if (!variant) return <div className="r3d-screen"><div className="r3d-locate"><p>Dem Angebot fehlt eine Variante. <a href={backHref}>Zurück zum Angebot</a></p></div></div>;
   if (!origin) return <Locate address={siteAddress} backHref={backHref} locked={locked} onFound={setPlace} />;
 
-  async function save(next: BuildingSpec[]): Promise<string> {
+  async function save(state: PlanState): Promise<string> {
     if (!origin || !variant) throw new Error("Der Standort fehlt.");
-    const faces = facesFromBuildings(next, origin, variant.faces, variant.id);
+    const faces = facesFromBuildings(state.buildings, origin, variant.faces, variant.id);
     if (faces.length > MAX_FACES) {
       throw new Error(`Nicht gespeichert: Die Variante hätte ${faces.length} Dachflächen, möglich sind ${MAX_FACES}. Bitte ein Gebäude entfernen oder ein Walmdach als Satteldach führen.`);
     }
     const emptied = resetFaces(variant.faces, faces);
     const filled = faces.filter((face) => face.geometry?.placement && activeModuleCount(face.geometry) > 0);
     const moduleCount = filled.reduce((sum, face) => sum + activeModuleCount(face.geometry), 0);
+    /*
+     * Strings und Wechselrichter gehören zur Variante. Die vorbelegten Wechselrichter aus den Positionen werden erst
+     * gespeichert, wenn mit ihnen gearbeitet wurde: sonst gäbe es zwei Stellen, die auseinanderlaufen können.
+     */
+    const { wiring } = state;
+    const unitsChanged = !sameUnits(wiring.inverters, syncedUnits.current);
+    const inUse = variant.planning != null || wiring.strings.length > 0 || unitsChanged;
+    const planning: VariantPlanning | null = inUse && (wiring.inverters.length > 0 || wiring.strings.length > 0) ? { version: 1, inverters: wiring.inverters, strings: wiring.strings } : null;
     /* Liegen Module, bestimmen sie Stückzahl und Leistung der Variante, wie in der bisherigen Dachplanung. */
-    const nextVariant: VariantDTO =
-      moduleCount > 0 ? { ...variant, faces, lines: syncModuleLines(variant.lines, faces, catalog), kwpManual: false, kwpOverride: null } : { ...variant, faces };
+    const moduleLines = moduleCount > 0 ? syncModuleLines(variant.lines, faces, catalog) : variant.lines;
+    /* Wurden in der Planung Wechselrichter getauscht, folgen die Positionen des Angebots. */
+    const lines = unitsChanged ? syncInverterLines(moduleLines, wiring.inverters, catalog) : moduleLines;
+    const nextVariant: VariantDTO = moduleCount > 0 ? { ...variant, faces, planning, lines, kwpManual: false, kwpOverride: null } : { ...variant, faces, planning, lines };
     let nextOffer: OfferDTO = {
       ...offer,
       latitude: place.latitude,
@@ -98,6 +132,7 @@ export function OfferPlanner3D({
     const result = await saveOffer(nextOffer);
     if (!result.ok) throw new Error(result.error);
     setOffer(nextOffer);
+    syncedUnits.current = wiring.inverters;
 
     const planned = faces.filter((face) => face.geometry?.building).length;
     const notes: string[] = [];
@@ -112,6 +147,17 @@ export function OfferPlanner3D({
       notes.push(`Gespeichert. ${planned === 1 ? "Eine Dachfläche steht" : `${planned} Dachflächen stehen`} mit Neigung und Ausrichtung im Angebot.`);
       const before = variant.faces.some((face) => face.geometry?.placement && activeModuleCount(face.geometry) > 0);
       notes.push(before ? "Es liegen keine Module mehr, die Modulposition im Angebot bitte prüfen." : "Module lassen sich im Schritt 2 setzen.");
+    }
+    if (wiring.strings.length > 0) {
+      const wired = [...membership(state.buildings).byString.values()].reduce((sum, refs) => sum + refs.length, 0);
+      notes.push(`${wiring.strings.length === 1 ? "Ein String" : `${wiring.strings.length} Strings`}, ${wired} von ${moduleCount} Modulen verstringt.`);
+    }
+    if (unitsChanged) {
+      const planned = new Set(wiring.inverters.map((unit) => unit.catalogItemId));
+      const unknown = wiring.inverters.some((unit) => !catalog.some((item) => item.id === unit.catalogItemId));
+      const stale = inverterLines(lines).some((line) => !planned.has(line.catalogItemId ?? ""));
+      if (wiring.inverters.length > 0) notes.push(unknown ? "Ein Wechselrichter fehlt im Katalog, die Position im Angebot bitte von Hand anpassen." : "Die Wechselrichter-Position im Angebot steht auf der Planung.");
+      if (stale) notes.push("Im Angebot steht noch ein Wechselrichter, der in der Planung nicht mehr vorkommt. Bitte in den Positionen prüfen.");
     }
     if (emptied.length > 0) notes.push(`${emptied.length === 1 ? "Eine Fläche wurde" : `${emptied.length} Flächen wurden`} durch das Umplanen entfernt oder geleert, ihre Leistung zählt nicht mehr mit.`);
 
@@ -141,8 +187,10 @@ export function OfferPlanner3D({
         title="3D-Planung"
         subtitle={[customerName, variant.name].filter(Boolean).join(" · ")}
         initial={buildings}
+        initialWiring={firstWiring}
         ground={ground}
         modules={modules}
+        inverters={inverters}
         defaultModuleId={variant.lines.find((line) => line.section === "module" && line.catalogItemId)?.catalogItemId ?? null}
         locked={locked}
         onSave={save}

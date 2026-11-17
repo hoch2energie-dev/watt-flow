@@ -6,6 +6,7 @@ import type { LngLat } from "@/lib/roof/geo";
 import { newBuilding } from "@/lib/roof3d/building";
 import { facesFromBuildings } from "@/lib/roof3d/faces";
 import { setCells, updatePlan } from "@/lib/roof3d/plans";
+import { NO_WIRING, autoString, releaseCells } from "@/lib/roof3d/strings";
 import { newTenantPower, type TenantPower } from "@/lib/tenant-power";
 import { demoOffer } from "@/preview/demo-data";
 
@@ -62,7 +63,7 @@ describe("Angebotsseite: Reiter, Themenhubs, Kacheln", () => {
   });
 
   it("erkennt, was an der Photovoltaik schon steht", () => {
-    expect(solarProgress(variant)).toEqual({ roof: false, layout: false, modules: true, inverter: true });
+    expect(solarProgress(variant)).toEqual({ roof: false, layout: false, modules: true, inverter: true, strings: false });
     expect(solarProgress({ ...variant, lines: variant.lines.filter((line) => line.section !== "inverter") }).inverter).toBe(false);
     /* Gebäude aus der 3D-Planung: erst das Dach, mit belegten Modulen auch die Modulbelegung. */
     const origin: LngLat = [6.9583, 50.9413];
@@ -71,6 +72,27 @@ describe("Angebotsseite: Reiter, Themenhubs, Kacheln", () => {
     const placement = { catalogItemId: "k1", powerWp: 450, widthM: 1.134, heightM: 1.762, portrait: true, setbackM: 0.3, gapM: 0.02 };
     const filled = setCells(updatePlan(house, 0, (plan) => ({ ...plan, placement })), 0, "all", true);
     expect(solarProgress({ ...variant, faces: facesFromBuildings([filled], origin, [], variant.id) })).toMatchObject({ roof: true, layout: true });
+  });
+
+  it("meldet die Strings erst als zugeordnet, wenn jedes Modul an einem MPP-Tracker hängt", () => {
+    const origin: LngLat = [6.9583, 50.9413];
+    const placement = { catalogItemId: "k1", powerWp: 450, widthM: 1.134, heightM: 1.762, portrait: true, setbackM: 0.3, gapM: 0.02 };
+    const house = setCells(updatePlan(newBuilding("haus", [[-5, -4], [5, -4], [5, 4], [-5, 4]]), 0, (plan) => ({ ...plan, placement })), 0, "all", true);
+    const count = house.plans?.[0].modules.length ?? 0;
+    const wired = autoString([house], NO_WIRING, { building: "haus", edge: 0 }, 60, () => "s1");
+    const withFaces = (buildings: typeof wired.buildings, planning: typeof variant.planning) => ({ ...variant, faces: facesFromBuildings(buildings, origin, [], variant.id), planning });
+    const open = { version: 1 as const, inverters: [{ id: "w1", catalogItemId: "k3" }], strings: wired.wiring.strings };
+    const done = { ...open, strings: open.strings.map((entry) => ({ ...entry, inverter: "w1", tracker: 1 })) };
+    expect(count).toBeGreaterThan(4);
+    /* Module liegen, aber ohne Strings. */
+    expect(solarProgress(withFaces([house], null)).strings).toBe(false);
+    /* Verstringt, aber noch an keinem Wechselrichter. */
+    expect(solarProgress(withFaces(wired.buildings, open)).strings).toBe(false);
+    expect(solarProgress(withFaces(wired.buildings, done)).strings).toBe(true);
+    /* Ein Modul wieder frei: nicht mehr vollständig. */
+    expect(solarProgress(withFaces(releaseCells(wired.buildings, done, { building: "haus", edge: 0 }, [0]), done)).strings).toBe(false);
+    /* Ohne Module gibt es nichts zu verschalten. */
+    expect(solarProgress({ ...variant, faces: [], planning: done }).strings).toBe(false);
   });
 
   it("nennt sieben Kennzahlen und Striche, wenn noch keine Anlage geplant ist", () => {

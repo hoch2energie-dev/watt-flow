@@ -131,6 +131,7 @@ export function PlanningHub({
                         <Step done={progress.roof}>Gebäude gezeichnet</Step>
                         <Step done={progress.layout}>Modulbelegung</Step>
                         <Step done={progress.inverter}>Wechselrichter gewählt</Step>
+                        <Step done={progress.strings}>Strings zugeordnet</Step>
                       </ul>
                       {progress.modules && !progress.layout ? <p className="mt-2 text-xs text-muted">Module stehen in den Positionen, sind aber noch nicht auf dem Dach belegt.</p> : null}
                       <TileAction>

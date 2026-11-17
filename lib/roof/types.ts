@@ -27,6 +27,9 @@ export type ModulePlacement = {
 export type PlannedModule = {
   corners: [PlanPoint, PlanPoint, PlanPoint, PlanPoint];
   active: boolean;
+  /** Aus der 3D-Planung: Kennung des Strings, in dem das Modul hängt, und seine Stelle darin ab 1. */
+  string?: string;
+  order?: number;
 };
 
 export type HorizonSample = {

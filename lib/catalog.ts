@@ -3,6 +3,8 @@ export type SpecField = {
   label: string;
   unit?: string;
   kind: "number" | "text" | "select";
+  /** Nachkommastellen eines Zahlenfelds im Katalog. Ohne Angabe keine. */
+  digits?: number;
   options?: { value: string; label: string }[];
 };
 
@@ -31,6 +33,12 @@ export const CATALOG_TYPES: CatalogType[] = [
       { key: "heightMm", label: "Höhe", unit: "mm", kind: "number" },
       { key: "weightKg", label: "Gewicht", unit: "kg", kind: "number" },
       { key: "cellType", label: "Zelltyp", kind: "text" },
+      /* Datenblattwerte bei Standardbedingungen, für die String-Prüfung in der 3D-Planung. */
+      { key: "vocV", label: "Leerlaufspannung Voc", unit: "V", kind: "number", digits: 2 },
+      { key: "iscA", label: "Kurzschlussstrom Isc", unit: "A", kind: "number", digits: 2 },
+      { key: "vmppV", label: "Spannung im MPP (Vmpp)", unit: "V", kind: "number", digits: 2 },
+      { key: "imppA", label: "Strom im MPP (Impp)", unit: "A", kind: "number", digits: 2 },
+      { key: "tempCoeffVocPct", label: "Temperaturkoeffizient Voc", unit: "%/K", kind: "number", digits: 3 },
       warranty,
     ],
   },
@@ -53,6 +61,14 @@ export const CATALOG_TYPES: CatalogType[] = [
       },
       { key: "mppt", label: "MPP-Tracker", kind: "number" },
       { key: "efficiencyPercent", label: "Max. Wirkungsgrad", unit: "%", kind: "number" },
+      /* Grenzwerte aus dem Datenblatt, für die String-Prüfung in der 3D-Planung. */
+      { key: "stringsPerMppt", label: "Strings je MPP-Tracker", kind: "number" },
+      { key: "maxDcVoltageV", label: "Max. DC-Spannung", unit: "V", kind: "number" },
+      { key: "mppMinV", label: "MPP-Bereich von", unit: "V", kind: "number" },
+      { key: "mppMaxV", label: "MPP-Bereich bis", unit: "V", kind: "number" },
+      { key: "maxInputCurrentA", label: "Max. Eingangsstrom je MPP-Tracker", unit: "A", kind: "number", digits: 1 },
+      { key: "maxShortCircuitCurrentA", label: "Max. Kurzschlussstrom je MPP-Tracker", unit: "A", kind: "number", digits: 1 },
+      { key: "maxDcPowerKw", label: "Max. DC-Leistung", unit: "kW", kind: "number", digits: 1 },
       warranty,
     ],
   },
