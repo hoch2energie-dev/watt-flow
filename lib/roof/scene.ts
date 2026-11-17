@@ -1,4 +1,4 @@
-import { centroidLngLat, centroidXY, heightOnPlane, toLocal, vertexHeights, type XY } from "@/lib/roof/geo";
+import { centroidLngLat, centroidXY, heightOnPlane, moduleCornersAt, toLocal, vertexHeights, type XY } from "@/lib/roof/geo";
 import type { RoofFaceInput } from "@/lib/pvgis/types";
 
 export type SceneModel = {
@@ -32,9 +32,9 @@ export function buildScene(faces: RoofFaceInput[]): SceneModel {
     walls.push(skirt(local, heights));
     for (const panel of geometry.modules) {
       if (!panel.active) continue;
-      const corners = panel.corners;
-      const lifted = corners.map((corner) => {
-        const point: XY = [corner[0], corner[1]];
+      /* Gespeichert relativ zur eigenen Fläche, gezeichnet im gemeinsamen Modell. */
+      const corners = moduleCornersAt(geometry.ring, panel.corners, origin);
+      const lifted = corners.map((point) => {
         const height = heightOnPlane(local, face.azimuthDeg, face.tiltDeg, point) + 0.25;
         span = Math.max(span, Math.hypot(point[0], point[1]) * 2);
         return [point[0], height, point[1]];

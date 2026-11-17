@@ -180,3 +180,12 @@ export function heightOnPlane(polygon: XY[], azimuthDeg: number, tiltDeg: number
 export function vertexHeights(local: XY[], azimuthDeg: number, tiltDeg: number): number[] {
   return local.map((point) => heightOnPlane(local, azimuthDeg, tiltDeg, point));
 }
+
+/**
+ * Modulecken sind relativ zum Schwerpunkt ihrer eigenen Dachfläche gespeichert.
+ * Für Zeichnungen mit mehreren Flächen rechnet dies sie auf einen gemeinsamen Ursprung um.
+ */
+export function moduleCornersAt(ring: LngLat[], corners: readonly (readonly [number, number])[], origin: LngLat): XY[] {
+  const faceOrigin = centroidLngLat(ring);
+  return corners.map((corner) => toLocal(toLngLat([corner[0], corner[1]], faceOrigin), origin));
+}

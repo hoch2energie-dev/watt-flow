@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import { centroidLngLat, heightOnPlane, toLocal, vertexHeights, type XY } from "@/lib/roof/geo";
+import { centroidLngLat, heightOnPlane, moduleCornersAt, toLocal, vertexHeights, type XY } from "@/lib/roof/geo";
 import { activeModuleCount } from "@/lib/roof/types";
 import { formatNumber } from "@/lib/format";
 import type { RoofFaceInput } from "@/lib/pvgis/types";
@@ -35,9 +35,12 @@ export function drawRoofPlan(doc: Doc, faces: RoofFaceInput[], colors: Colors) {
   const planPoints: { east: number; north: number }[] = [];
   const collect = (point: XY) => planPoints.push({ east: point[0], north: point[1] });
   const localOf = (face: RoofFaceInput) => (face.geometry?.ring ?? []).map((point) => toLocal(point, origin));
+  /* Belegte Module einer Fläche im gemeinsamen Bezugssystem der Zeichnung. */
+  const panelsOf = (face: RoofFaceInput) =>
+    (face.geometry?.modules ?? []).filter((panel) => panel.active).map((panel) => moduleCornersAt(face.geometry?.ring ?? [], panel.corners, origin));
   for (const face of planned) {
     localOf(face).forEach(collect);
-    face.geometry?.modules.filter((panel) => panel.active).forEach((panel) => panel.corners.forEach(collect));
+    panelsOf(face).forEach((corners) => corners.forEach(collect));
   }
   const projectPlan = fitter(planPoints.map((point) => ({ x: point.east, y: point.north })), plan, true);
 
@@ -46,9 +49,8 @@ export function drawRoofPlan(doc: Doc, faces: RoofFaceInput[], colors: Colors) {
     for (const obstacle of face.geometry?.obstacles ?? []) {
       strokeFill(doc, obstacle.ring.map((point) => toLocal(point, origin)).map((point) => projectPlan(point[0], point[1])), colors.accent, colors.accent);
     }
-    for (const panel of face.geometry?.modules ?? []) {
-      if (!panel.active) continue;
-      strokeFill(doc, panel.corners.map((corner) => projectPlan(corner[0], corner[1])), "#1e4d6b", "#143044");
+    for (const corners of panelsOf(face)) {
+      strokeFill(doc, corners.map((corner) => projectPlan(corner[0], corner[1])), "#1e4d6b", "#143044");
     }
   }
 
@@ -70,10 +72,8 @@ export function drawRoofPlan(doc: Doc, faces: RoofFaceInput[], colors: Colors) {
       "#e7d7c4",
       colors.brand,
     );
-    for (const panel of face.geometry?.modules ?? []) {
-      if (!panel.active) continue;
-      const corners = panel.corners.map((corner) => {
-        const point: XY = [corner[0], corner[1]];
+    for (const panel of panelsOf(face)) {
+      const corners = panel.map((point) => {
         const projected = iso(point[0], point[1], heightOnPlane(local, face.azimuthDeg, face.tiltDeg, point));
         return projectIso(projected.x, projected.y);
       });
