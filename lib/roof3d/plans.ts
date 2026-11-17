@@ -137,8 +137,8 @@ function fingerprint(face: RoofFace3D, plan: FacePlan): string {
 
 /**
  * Hält die Raster zu den Dachflächen passend. Unveränderte Flächen bleiben, wie sie sind.
- * Hat sich an einer Fläche etwas geändert, wird neu gerastert; ein Platz bleibt belegt,
- * wenn an fast derselben Stelle wieder einer liegt. Pläne zu Flächen, die es nicht mehr gibt, entfallen.
+ * Hat sich an einer Fläche etwas geändert, wird neu gerastert: Eine volle Fläche bleibt voll,
+ * sonst ist ein Platz belegt, wenn dort vorher schon ein Modul lag. Pläne zu Flächen, die es nicht mehr gibt, entfallen.
  */
 export function syncPlans(input: BuildingSpec): BuildingSpec {
   const spec = normalizeBuilding(input);
@@ -156,17 +156,42 @@ export function syncPlans(input: BuildingSpec): BuildingSpec {
     }
     changed = true;
     const fresh = layoutFace(faceFrame(spec, face), face, plan);
-    const taken = plan.modules.filter((cell) => cell.active).map((cell) => centroidXY(cell.corners));
+    /*
+     * Eine voll belegte Fläche bleibt voll. Sonst bleibt belegt, wo vorher ein Modul lag:
+     * Die Mitte des neuen Platzes muss auf einem alten Modul liegen, die Fuge zählt mit.
+     */
+    const full = plan.modules.length > 0 && plan.modules.every((cell) => cell.active);
+    const taken = plan.modules.filter((cell) => cell.active).map((cell) => cell.corners);
     plans[face.edge] = {
       ...plan,
       layoutKey: key,
       modules: fresh.map((cell) => {
         const center = centroidXY(cell.corners);
-        return { ...cell, active: taken.some((point) => Math.hypot(point[0] - center[0], point[1] - center[1]) < 0.3) };
+        return { ...cell, active: full || taken.some((ring) => pointInPolygon(center, ring) || distanceToEdges(center, ring) < 0.06) };
       }),
     };
   }
   return changed ? { ...spec, plans } : spec;
+}
+
+/**
+ * Setzt einen neuen Umriss. Wurde das Gebäude nur verschoben, wandern Aufbauten und Module mit.
+ * Wurde eine Seite verschoben, bleiben die Aufbauten, wo sie auf dem Luftbild liegen.
+ */
+export function withOutline(spec: BuildingSpec, outline: XY[]): BuildingSpec {
+  const from = spec.outline;
+  const shift: XY | null = from.length === outline.length && from.length > 0 ? [outline[0][0] - from[0][0], outline[0][1] - from[0][1]] : null;
+  const moved = shift != null && from.every((point, index) => Math.abs(outline[index][0] - point[0] - shift[0]) < 1e-6 && Math.abs(outline[index][1] - point[1] - shift[1]) < 1e-6);
+  if (!shift || !moved || !spec.plans) return syncPlans({ ...spec, outline });
+  const plans: Record<number, FacePlan> = {};
+  for (const [edge, plan] of Object.entries(spec.plans)) {
+    plans[Number(edge)] = {
+      ...plan,
+      obstacles: plan.obstacles.map((obstacle) => ({ ...obstacle, center: [obstacle.center[0] + shift[0], obstacle.center[1] + shift[1]] })),
+      modules: plan.modules.map((cell) => ({ ...cell, corners: cell.corners.map((corner): XY => [corner[0] + shift[0], corner[1] + shift[1]]) as PlanModule["corners"] })),
+    };
+  }
+  return syncPlans({ ...spec, outline, plans });
 }
 
 /** Fingerabdruck für eine frisch geladene Fläche, damit ihr gespeichertes Raster unangetastet bleibt. */
@@ -184,6 +209,20 @@ export function emptyPlan(): FacePlan {
 export function updatePlan(spec: BuildingSpec, edge: number, change: (plan: FacePlan) => FacePlan): BuildingSpec {
   const current = spec.plans?.[edge] ?? emptyPlan();
   return syncPlans({ ...spec, plans: { ...spec.plans, [edge]: change(current) } });
+}
+
+/** Verschiebt einen Aufbau. Liegt seine Mitte danach auf einer anderen Dachseite, gehört er zu dieser. */
+export function moveObstacle(spec: BuildingSpec, edge: number, id: string, center: XY): { spec: BuildingSpec; edge: number } {
+  const obstacle = spec.plans?.[edge]?.obstacles.find((entry) => entry.id === id);
+  if (!obstacle) return { spec, edge };
+  const moved = { ...obstacle, center };
+  const under = buildRoof(spec).faces.find((face) => pointInPolygon(center, face.ring.map((point): XY => [point[0], point[1]])));
+  const target = under?.edge ?? edge;
+  if (target === edge) {
+    return { spec: updatePlan(spec, edge, (plan) => ({ ...plan, obstacles: plan.obstacles.map((entry) => (entry.id === id ? moved : entry)) })), edge };
+  }
+  const without = updatePlan(spec, edge, (plan) => ({ ...plan, obstacles: plan.obstacles.filter((entry) => entry.id !== id) }));
+  return { spec: updatePlan(without, target, (plan) => ({ ...plan, obstacles: [...plan.obstacles, moved] })), edge: target };
 }
 
 /** Belegt oder leert einzelne Plätze, ohne neu zu rastern. */

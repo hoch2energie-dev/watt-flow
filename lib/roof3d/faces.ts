@@ -84,9 +84,9 @@ function obstacleFromStored(spec: BuildingSpec, face: RoofFace3D, stored: RoofOb
 
 /**
  * Erzeugt die Dachflächen der Gebäude. Flächen, die nicht aus der 3D-Planung stammen,
- * bleiben unverändert am Ende stehen. Liegt eine Fläche noch am selben Ort, behält sie
- * Namen, Leistung, Module und Verluste. Hat sich ihr Grundriss geändert, beginnt sie leer,
- * weil die alten Module nicht mehr auf sie passen.
+ * bleiben unverändert am Ende stehen. Eine Fläche, die es schon gab, behält ihre Kennung,
+ * einen von Hand vergebenen Namen, eine von Hand eingetragene Leistung und ihre Verluste.
+ * Aufbauten und Module führt die Planung selbst, sie stehen an den Gebäuden.
  *
  * Wiedererkannt wird eine Fläche an Gebäude und Kante, nicht an ihrer Kennung: Beim Kopieren
  * einer Variante bekommen die Flächen neue Kennungen. Neue Kennungen enthalten die Variante,
@@ -137,11 +137,17 @@ export function facesFromBuildings(buildings: BuildingSpec[], origin: LngLat, pr
           ),
         };
       }
-      const laidOut = plan?.placement && geometry.modules.length > 0 ? layoutKwp(geometry) : null;
+      /*
+       * Leistung: Ist ein Modul gewählt, zählt die Belegung, auch wenn noch kein Platz belegt ist.
+       * Ohne Modul bleibt eine von Hand eingetragene Leistung stehen. Kam sie aber aus einer
+       * Belegung, die es nicht mehr gibt, ist die Fläche leer.
+       */
+      const active = plan?.placement ? plan.modules.filter((cell) => cell.active).length : 0;
+      const manual = before && layoutKwp(before.geometry) == null ? before.kwp : 0;
       planned.push({
         id,
-        name: kept ? kept.name : faceName(number, buildings.length, model.roofType, face.azimuthDeg),
-        kwp: laidOut ?? (kept ? kept.kwp : 0),
+        name: before && !autoNamed(before) ? before.name : faceName(number, buildings.length, model.roofType, face.azimuthDeg),
+        kwp: plan?.placement ? Math.round(active * plan.placement.powerWp) / 1000 : manual,
         tiltDeg: face.tiltDeg,
         azimuthDeg: face.azimuthDeg,
         mounting: "gebaeude",
@@ -157,9 +163,23 @@ export function faceId(variantId: string, buildingId: string, edge: number): str
   return `${variantId.slice(0, 30)}:${buildingId.slice(0, 40)}:${edge}`;
 }
 
-/** Flächen mit Leistung, die nach dem Umplanen leer beginnen. Für den Hinweis beim Speichern. */
+/**
+ * Flächen mit Leistung, die durch das Umplanen leer geworden sind. Für den Hinweis beim Speichern.
+ * Eine Fläche, die am selben Ort liegt und von Hand geleert wurde, zählt nicht dazu.
+ */
 export function resetFaces(previous: RoofFaceInput[], next: RoofFaceInput[]): RoofFaceInput[] {
-  return previous.filter((face) => face.geometry?.building && face.kwp > 0 && !next.some((entry) => entry.id === face.id && entry.kwp > 0));
+  return previous.filter((face) => {
+    if (!face.geometry?.building || face.kwp <= 0) return false;
+    const now = next.find((entry) => entry.id === face.id);
+    if (!now) return true;
+    return now.kwp <= 0 && !(now.geometry && sameRing(now.geometry.ring, face.geometry.ring));
+  });
+}
+
+/** Trägt die Fläche noch den Namen, den die Planung ihr gegeben hat? Dann darf er sich mit dem Dach ändern. */
+function autoNamed(face: RoofFaceInput): boolean {
+  const tail = face.geometry?.building?.roofType === "flach" ? "flach" : windName(face.azimuthDeg);
+  return new RegExp(`^Dach( \\d+)? ${tail}$`).test(face.name);
 }
 
 function faceName(number: number, count: number, roofType: RoofType, azimuthDeg: number): string {

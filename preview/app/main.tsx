@@ -52,7 +52,7 @@ function App() {
   return (
     <>
       {page === "planung" ? (
-        <OfferPlanner3D key={`p${visit}`} initial={db.offer} variantId={db.offer.variants[0].id} siteAddress={demoMeta.siteAddress} customerName={demoMeta.customerName} locked={false} groundOverride={ground} />
+        <OfferPlanner3D key={`p${visit}`} initial={db.offer} catalog={demoCatalog} variantId={db.offer.variants[0].id} siteAddress={demoMeta.siteAddress} customerName={demoMeta.customerName} locked={false} groundOverride={ground} />
       ) : (
         <Shell user={{ name: "Rudolf Gress", email: "", role: "ADMIN" }} company="Vorschau mit Beispieldaten" mustChangePassword={false} demoSecret={false}>
           <OfferWizard key={`a${visit}`} initial={db.offer} catalog={demoCatalog} meta={demoMeta} />

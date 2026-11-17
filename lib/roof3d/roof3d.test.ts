@@ -213,15 +213,21 @@ describe("Dachflächen fürs Angebot", () => {
     expect(buildingsFromFaces([legacy], origin)).toEqual([]);
   });
 
-  it("behält Leistung und Module, solange die Fläche am selben Ort liegt", () => {
+  it("behält eigenen Namen und von Hand eingetragene Leistung, auch wenn das Dach umgeplant wird", () => {
     const first = facesFromBuildings([spec], origin, [], "v1");
-    const planned = first.map((face, index) => (index === 0 ? { ...face, name: "Südseite groß", kwp: 8.8 } : face));
+    expect(first.map((face) => face.name)).toEqual(["Dach Süd", "Dach Nord"]);
+    const planned = first.map((face, index) => ({ ...face, kwp: index === 0 ? 8.8 : 3, name: index === 0 ? "Südseite groß" : face.name }));
     const steeper = facesFromBuildings([{ ...spec, wallHeightM: 4.5 }], origin, planned, "v1");
     expect([steeper[0].name, steeper[0].kwp]).toEqual(["Südseite groß", 8.8]);
     const moved = facesFromBuildings([{ ...spec, outline: moveOutline(spec.outline, [2, 0]) }], origin, planned, "v1");
-    expect([moved[0].id, moved[0].name, moved[0].kwp]).toEqual(["v1:haus:0", "Dach Süd", 0]);
-    expect(resetFaces(planned, moved).map((face) => face.id)).toEqual(["v1:haus:0"]);
-    expect(resetFaces(planned, steeper)).toEqual([]);
+    expect(moved.map((face) => [face.id, face.name, face.kwp])).toEqual([["v1:haus:0", "Südseite groß", 8.8], ["v1:haus:2", "Dach Nord", 3]]);
+    expect(resetFaces(planned, moved)).toEqual([]);
+    /* Namen, die die Planung vergeben hat, gehen mit dem Dach mit. */
+    const flat = facesFromBuildings([{ ...spec, roofType: "flach" }], origin, planned, "v1");
+    expect(flat.map((face) => [face.name, face.kwp])).toEqual([["Südseite groß", 8.8]]);
+    expect(resetFaces(planned, flat).map((face) => face.id)).toEqual(["v1:haus:2"]);
+    const two = facesFromBuildings([spec, newBuilding("garage", moveOutline(rect, [30, 0]))], origin, planned, "v1");
+    expect(two.map((face) => face.name)).toEqual(["Südseite groß", "Dach 1 Nord", "Dach 2 Süd", "Dach 2 Nord"]);
   });
 
   it("kopierte Variante: Flächen behalten ihre eigene Kennung, neue Flächen bekommen die der Variante", () => {
@@ -272,8 +278,9 @@ describe("Luftbild", () => {
 });
 
 import { pointInPolygon } from "@/lib/roof/geo";
-import { centroidLngLat, toLngLat } from "@/lib/roof/geo";
-import { cellAt, emptyPlan, faceFrame, heightOnFace, layoutFace, newObstacle, obstacleRing, planTotals, setCells, syncPlans, updatePlan } from "@/lib/roof3d/plans";
+import { centroidLngLat, moduleCornersAt, toLngLat } from "@/lib/roof/geo";
+import { buildScene } from "@/lib/roof/scene";
+import { cellAt, emptyPlan, faceFrame, heightOnFace, layoutFace, moveObstacle, newObstacle, obstacleRing, planTotals, setCells, syncPlans, updatePlan, withOutline } from "@/lib/roof3d/plans";
 
 describe("Aufbauten und Modulraster", () => {
   const placement = { catalogItemId: "k1", powerWp: 450, widthM: 1.134, heightM: 1.762, portrait: true, setbackM: 0.3, gapM: 0.02 };
@@ -332,6 +339,14 @@ describe("Aufbauten und Modulraster", () => {
     const left = blocked.plans![0].modules;
     expect(left.length).toBeLessThan(18);
     expect(left.every((cell) => cell.active)).toBe(true);
+    /* Hochkant voll belegt, dann quer und wieder hochkant: Die Fläche bleibt voll. Eine halb belegte bleibt etwa halb. */
+    const turn = (spec: typeof full, portrait: boolean) => updatePlan(spec, 0, (plan) => ({ ...plan, placement: { ...placement, portrait } }));
+    const across = turn(full, false);
+    expect(across.plans![0].modules.filter((cell) => cell.active)).toHaveLength(across.plans![0].modules.length);
+    expect(turn(across, true).plans![0].modules.every((cell) => cell.active)).toBe(true);
+    const half = turn(setCells(withModules, 0, [0, 1, 2, 3, 4, 5, 6, 7, 8], true), false).plans![0].modules.filter((cell) => cell.active).length;
+    expect(half).toBeGreaterThan(5);
+    expect(half).toBeLessThan(13);
     const steeper = syncPlans({ ...full, pitchDeg: [45, 30, 45, 30] });
     expect(steeper.plans![0].layoutKey).not.toBe(full.plans![0].layoutKey);
     const hipped = syncPlans({ ...full, roofType: "walm" });
@@ -365,6 +380,69 @@ describe("Aufbauten und Modulraster", () => {
     const again = facesFromBuildings([loaded], origin, faces, "v1");
     expect(again[0].kwp).toBeCloseTo(southFace.kwp, 6);
     expect(again[0].geometry?.modules[0].corners[0][0]).toBeCloseTo(southFace.geometry!.modules[0].corners[0][0], 4);
+  });
+
+  it("Leistung je Fläche: Belegung zählt, sobald ein Modul gewählt ist; ohne Modul bleibt die Handeingabe", () => {
+    const origin: LngLat = [6.8921, 51.0912];
+    const manual = facesFromBuildings([house], origin, [], "v1").map((face) => ({ ...face, kwp: 4 }));
+    /* Nur ein Kamin auf der Südseite: Die Handeingabe bleibt. */
+    const chimney = updatePlan(house, 0, (plan) => ({ ...plan, obstacles: [newObstacle("k", "kamin", [0, -2])] }));
+    expect(facesFromBuildings([chimney], origin, manual, "v1").map((face) => face.kwp)).toEqual([4, 4]);
+    /* Raster angelegt, noch nichts belegt: Die Fläche zählt mit 0, die andere bleibt. */
+    expect(facesFromBuildings([withModules], origin, manual, "v1").map((face) => face.kwp)).toEqual([0, 4]);
+    const some = setCells(withModules, 0, [0, 1, 2], true);
+    const filled = facesFromBuildings([some], origin, manual, "v1");
+    expect(filled.map((face) => face.kwp)).toEqual([1.35, 4]);
+    expect(resetFaces(manual, filled)).toEqual([]);
+    /* Modul wieder herausgenommen: Die Leistung kam aus der Belegung, also ist die Fläche leer. Kein Hinweis, das war Absicht. */
+    const [loaded] = buildingsFromFaces(filled, origin);
+    const cleared = facesFromBuildings([updatePlan(loaded, 0, (plan) => ({ ...plan, placement: null }))], origin, filled, "v1");
+    expect(cleared.map((face) => [face.kwp, face.geometry?.modules.length])).toEqual([[0, 0], [4, 0]]);
+    expect(resetFaces(filled, cleared)).toEqual([]);
+    /* Gebäude verschoben: Module und Aufbauten wandern mit, die Handeingabe der Nordseite bleibt. */
+    const shifted = withOutline(updatePlan(loaded, 0, (plan) => ({ ...plan, obstacles: [newObstacle("s", "sperrzone", [-3.5, -1])] })), moveOutline(loaded.outline, [3, 0.5]));
+    expect(shifted.plans![0].obstacles[0].center).toEqual([-0.5, -0.5]);
+    expect(shifted.plans![0].modules.filter((cell) => cell.active)).toHaveLength(3);
+    const moved = facesFromBuildings([shifted], origin, filled, "v1");
+    expect(moved.map((face) => face.kwp)).toEqual([1.35, 4]);
+    expect(resetFaces(filled, moved)).toEqual([]);
+    /* Eine Seite verschoben: Der Aufbau bleibt, wo er auf dem Luftbild liegt. */
+    const pushed = withOutline(shifted, pushEdge(shifted.outline, 1, 1));
+    expect(pushed.plans![0].obstacles[0].center).toEqual([-0.5, -0.5]);
+  });
+
+  it("ein Aufbau, der über den First gezogen wird, wechselt die Dachseite und gibt seine Plätze frei", () => {
+    const blocked = updatePlan(setCells(withModules, 0, "all", true), 0, (plan) => ({ ...plan, obstacles: [newObstacle("k", "kamin", [0, -2])] }));
+    expect(blocked.plans![0].modules.length).toBeLessThan(18);
+    const same = moveObstacle(blocked, 0, "k", [1, -2.5]);
+    expect([same.edge, same.spec.plans![0].obstacles[0].center]).toEqual([0, [1, -2.5]]);
+    const over = moveObstacle(blocked, 0, "k", [0, 2]);
+    expect(over.edge).toBe(2);
+    expect(over.spec.plans![0].obstacles).toEqual([]);
+    expect(over.spec.plans![0].modules).toHaveLength(18);
+    expect(over.spec.plans![0].modules.every((cell) => cell.active)).toBe(true);
+    expect(over.spec.plans![2].obstacles.map((entry) => [entry.id, entry.center])).toEqual([["k", [0, 2]]]);
+    /* Neben das Dach gezogen bleibt er bei seiner Seite. */
+    expect(moveObstacle(blocked, 0, "k", [40, 40]).edge).toBe(0);
+    expect(moveObstacle(blocked, 0, "gibt-es-nicht", [0, 0]).spec).toBe(blocked);
+  });
+
+  it("Zeichnungen mit mehreren Flächen: Module liegen auf ihrer eigenen Dachseite, nicht alle in der Mitte", () => {
+    const origin: LngLat = [6.8921, 51.0912];
+    const both = setCells(updatePlan(setCells(withModules, 0, "all", true), 2, (plan) => ({ ...plan, placement })), 2, "all", true);
+    const faces = facesFromBuildings([both], origin, [], "v1");
+    const shared = centroidLngLat(faces.flatMap((face) => face.geometry!.ring));
+    for (const face of faces) {
+      const ring = face.geometry!.ring.map((point) => toLocal(point, shared));
+      for (const panel of face.geometry!.modules) {
+        for (const corner of moduleCornersAt(face.geometry!.ring, panel.corners, shared)) expect(pointInPolygon(corner, ring)).toBe(true);
+      }
+    }
+    /* Die Südseite liegt südlich der Mitte, die Nordseite nördlich. In der alten 3D-Vorschau ist Nord die z-Achse. */
+    const scene = buildScene(faces);
+    const norths = scene.modules.map((triangles) => triangles[2]);
+    expect(norths.filter((value) => value < 0)).toHaveLength(18);
+    expect(norths.filter((value) => value > 0)).toHaveLength(18);
   });
 
   it("behält die freie Form eines Hindernisses aus der alten Dachplanung", () => {

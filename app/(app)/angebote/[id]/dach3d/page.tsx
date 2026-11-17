@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { OfferPlanner3D } from "@/components/roof3d/offer-planner";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { toOfferDTO } from "@/lib/dto";
+import { toCatalogOption, toOfferDTO } from "@/lib/dto";
 import { addressLine, customerName } from "@/lib/format";
 
 export const metadata = { title: "3D-Planung" };
@@ -25,9 +25,11 @@ export default async function Roof3DPage({
     },
   });
   if (!offer) notFound();
+  const catalog = await prisma.catalogItem.findMany({ where: { active: true }, orderBy: { name: "asc" } });
   return (
     <OfferPlanner3D
       initial={toOfferDTO(offer)}
+      catalog={catalog.map(toCatalogOption)}
       variantId={query.variante ?? offer.variants.find((variant) => variant.recommended)?.id ?? offer.variants[0]?.id ?? ""}
       siteAddress={addressLine(offer.request)}
       customerName={customerName(offer.request.customer)}

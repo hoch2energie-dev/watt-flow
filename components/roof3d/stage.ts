@@ -19,16 +19,25 @@ import {
   type View,
 } from "@/lib/roof3d/camera";
 import { formatMeters, moveOutline, pushEdge, snapDraft, type SnapResult } from "@/lib/roof3d/draw";
+import { cellAt, faceFrame, heightOnFace, obstacleRing, type FaceFrame, type ObstacleKind } from "@/lib/roof3d/plans";
 
-export type Tool = "select" | "draw";
+export type Tool = "select" | "draw" | ObstacleKind;
+export type Step = "gebaeude" | "module";
+/** Was gewählt ist: ein Gebäude, darin eine Dachfläche (nach Kante) oder ein Aufbau. */
+export type Selection = { id: string | null; edge: number | null; obstacle: string | null };
+export const NO_SELECTION: Selection = { id: null, edge: null, obstacle: null };
 
 export type ViewInfo = { headingDeg: number; tiltDeg: number; distM: number };
 
 export type StageEvents = {
-  onSelect(id: string | null): void;
+  onSelect(selection: Selection): void;
   onCreate(outline: XY[]): void;
   /** `done` ist falsch, solange gezogen wird. */
   onEdit(id: string, outline: XY[], done: boolean): void;
+  onPlaceObstacle(id: string, edge: number, kind: ObstacleKind, center: XY): void;
+  onMoveObstacle(id: string, edge: number, obstacle: string, center: XY, done: boolean): void;
+  /** Plätze des Modulrasters belegen oder leeren. Genannt sind alle Plätze des laufenden Strichs; eine leere Liste verwirft ihn. */
+  onPaint(id: string, edge: number, indexes: number[], active: boolean, done: boolean): void;
   onDraft(points: number): void;
   onView(info: ViewInfo): void;
   onGroundError(): void;
@@ -38,7 +47,12 @@ type Press = {
   x: number;
   y: number;
   moved: number;
-  drag: { kind: "edge"; edge: number; base: XY[]; from: XY } | { kind: "move"; base: XY[]; from: XY } | null;
+  drag:
+    | { kind: "edge"; edge: number; base: XY[]; from: XY }
+    | { kind: "move"; base: XY[]; from: XY }
+    | { kind: "obstacle"; id: string; edge: number; obstacle: string; base: XY; from: XY; center: XY | null }
+    | { kind: "paint"; id: string; edge: number; active: boolean; seen: number[] }
+    | null;
   current: XY[] | null;
 };
 
@@ -58,6 +72,11 @@ export class Stage {
   private group = new THREE.Group();
   private roofMaterial = new THREE.MeshLambertMaterial({ color: 0x2f3438, side: THREE.DoubleSide });
   private wallMaterial = new THREE.MeshLambertMaterial({ color: 0xf1ebe0, side: THREE.DoubleSide });
+  private moduleMaterial = new THREE.MeshLambertMaterial({ color: 0x1b3f63, side: THREE.DoubleSide });
+  private frameMaterial = new THREE.LineBasicMaterial({ color: 0xb4cde0 });
+  private chimneyMaterial = new THREE.MeshLambertMaterial({ color: 0xb9b2a6, side: THREE.DoubleSide });
+  private windowMaterial = new THREE.MeshLambertMaterial({ color: 0x7f97a6, side: THREE.DoubleSide });
+  private zoneMaterial = new THREE.MeshLambertMaterial({ color: 0xd9a441, side: THREE.DoubleSide });
 
   private view: View = { ...START_VIEW };
   private flat = false;
@@ -67,7 +86,8 @@ export class Stage {
   private snap = true;
   private buildings: BuildingSpec[] = [];
   private models = new Map<string, RoofModel>();
-  private selectedId: string | null = null;
+  private selection: Selection = NO_SELECTION;
+  private step: Step = "gebaeude";
   private draft: XY[] = [];
   private hover: SnapResult | null = null;
 
@@ -131,20 +151,60 @@ export class Stage {
 
   /* ---------- Zustand von außen ---------- */
 
-  setBuildings(buildings: BuildingSpec[], selectedId: string | null) {
+  setBuildings(buildings: BuildingSpec[], selection: Selection) {
     this.buildings = buildings;
-    this.selectedId = selectedId;
+    this.selection = selection;
     this.models = new Map(buildings.map((building) => [building.id, buildRoof(building)]));
     this.clearGroup();
     for (const building of buildings) {
       const model = this.models.get(building.id);
       if (!model) continue;
-      const roof = new THREE.Mesh(meshOf(model.faces.map((face) => face.ring)), this.roofMaterial);
-      const walls = new THREE.Mesh(meshOf(model.walls), this.wallMaterial);
-      roof.userData.id = building.id;
-      walls.userData.id = building.id;
-      this.group.add(roof, walls);
+      const add = (polygons: Point3[][], material: THREE.Material) => {
+        if (polygons.length === 0) return;
+        const mesh = new THREE.Mesh(meshOf(polygons), material);
+        mesh.userData.id = building.id;
+        this.group.add(mesh);
+      };
+      add(model.faces.map((face) => face.ring), this.roofMaterial);
+      add(model.walls, this.wallMaterial);
+      const panels: Point3[][] = [];
+      const solids: Record<ObstacleKind, Point3[][]> = { sperrzone: [], kamin: [], fenster: [] };
+      for (const face of model.faces) {
+        const plan = building.plans?.[face.edge];
+        if (!plan) continue;
+        const frame = faceFrame(building, face);
+        const lift = (point: XY, above: number): Point3 => [point[0], point[1], heightOnFace(frame, point) + above];
+        for (const cell of plan.modules) if (cell.active) panels.push(cell.corners.map((corner) => lift(corner, 0.07)));
+        for (const obstacle of plan.obstacles) {
+          const ring = obstacleRing(frame, obstacle);
+          if (obstacle.kind !== "kamin") {
+            solids[obstacle.kind].push(ring.map((point) => lift(point, 0.04)));
+            continue;
+          }
+          const top = Math.max(...ring.map((point) => heightOnFace(frame, point))) + Math.max(0.2, obstacle.heightM);
+          solids.kamin.push(ring.map((point): Point3 => [point[0], point[1], top]));
+          ring.forEach((point, index) => {
+            const next = ring[(index + 1) % ring.length];
+            solids.kamin.push([lift(point, -0.3), lift(next, -0.3), [next[0], next[1], top], [point[0], point[1], top]]);
+          });
+        }
+      }
+      add(panels, this.moduleMaterial);
+      if (panels.length > 0) {
+        /* Rahmenlinien, damit in der räumlichen Ansicht jedes Modul einzeln zu erkennen ist. */
+        const frames = new THREE.LineSegments(framesOf(panels, 0.012), this.frameMaterial);
+        frames.userData.id = building.id;
+        this.group.add(frames);
+      }
+      add(solids.kamin, this.chimneyMaterial);
+      add(solids.fenster, this.windowMaterial);
+      add(solids.sperrzone, this.zoneMaterial);
     }
+    this.dirty = true;
+  }
+
+  setStep(step: Step) {
+    this.step = step;
     this.dirty = true;
   }
 
@@ -153,8 +213,12 @@ export class Stage {
     this.draft = [];
     this.hover = null;
     this.events.onDraft(0);
-    this.canvas.style.cursor = tool === "draw" ? "crosshair" : "default";
+    this.canvas.style.cursor = this.restCursor();
     this.dirty = true;
+  }
+
+  private restCursor(): string {
+    return this.tool === "select" ? "default" : "crosshair";
   }
 
   setSnap(enabled: boolean) {
@@ -257,7 +321,37 @@ export class Stage {
   }
 
   private selected(): BuildingSpec | null {
-    return this.buildings.find((building) => building.id === this.selectedId) ?? null;
+    return this.buildings.find((building) => building.id === this.selection.id) ?? null;
+  }
+
+  private frameOf(building: BuildingSpec, edge: number): FaceFrame | null {
+    const face = this.models.get(building.id)?.faces.find((entry) => entry.edge === edge);
+    return face ? faceFrame(building, face) : null;
+  }
+
+  /** Dachfläche unter einem Punkt des Grundrisses. */
+  private faceAt(point: XY): { building: BuildingSpec; edge: number } | null {
+    for (let index = this.buildings.length - 1; index >= 0; index -= 1) {
+      const building = this.buildings[index];
+      for (const face of this.models.get(building.id)?.faces ?? []) {
+        if (pointInPolygon(point, face.ring.map((corner): XY => [corner[0], corner[1]]))) return { building, edge: face.edge };
+      }
+    }
+    return null;
+  }
+
+  private obstacleAt(point: XY): { building: BuildingSpec; edge: number; obstacle: string; center: XY } | null {
+    for (let index = this.buildings.length - 1; index >= 0; index -= 1) {
+      const building = this.buildings[index];
+      for (const [key, plan] of Object.entries(building.plans ?? {})) {
+        const frame = this.frameOf(building, Number(key));
+        if (!frame) continue;
+        for (const obstacle of plan.obstacles) {
+          if (pointInPolygon(point, obstacleRing(frame, obstacle))) return { building, edge: Number(key), obstacle: obstacle.id, center: obstacle.center };
+        }
+      }
+    }
+    return null;
   }
 
   /* ---------- Maus ---------- */
@@ -276,9 +370,23 @@ export class Stage {
   };
 
   private dragAt(event: PointerEvent): Press["drag"] {
-    const building = this.selected();
     const from = this.groundAt(event.clientX, event.clientY);
-    if (this.tool !== "select" || !this.flat || !building || !from) return null;
+    if (!this.flat || !from) return null;
+    if (this.step === "module") {
+      /* Belegt wird nur auf der gewählten Fläche. Ein Klick auf eine andere Fläche wählt sie erst aus. */
+      const face = this.faceAt(from);
+      const chosen = face && face.building.id === this.selection.id && face.edge === this.selection.edge;
+      const index = face && chosen ? cellAt(face.building.plans?.[face.edge], from) : -1;
+      if (!face || index < 0) return null;
+      const active = !face.building.plans![face.edge].modules[index].active;
+      this.events.onPaint(face.building.id, face.edge, [index], active, false);
+      return { kind: "paint", id: face.building.id, edge: face.edge, active, seen: [index] };
+    }
+    if (this.tool !== "select") return null;
+    const hit = this.obstacleAt(from);
+    if (hit) return { kind: "obstacle", id: hit.building.id, edge: hit.edge, obstacle: hit.obstacle, base: hit.center, from, center: null };
+    const building = this.selected();
+    if (!building) return null;
     const rect = this.canvas.getBoundingClientRect();
     const outline = building.outline;
     for (let edge = 0; edge < outline.length; edge += 1) {
@@ -290,12 +398,20 @@ export class Stage {
   }
 
   private onPointer = (event: PointerEvent) => {
-    if ((event.buttons & 3) === 3) this.chord = true;
+    if ((event.buttons & 3) === 3) {
+      /* Beide Tasten heißen Drehen. Ein Belegen, das mit der linken Taste schon begonnen hat, wird verworfen. */
+      const drag = this.press?.drag;
+      if (this.press && drag?.kind === "paint") {
+        this.events.onPaint(drag.id, drag.edge, [], drag.active, true);
+        this.press.drag = null;
+      }
+      this.chord = true;
+    }
     const next = pointerMode(event.buttons, this.chord);
     if (next !== this.mode) {
       this.mode = next;
       this.last = { x: event.clientX, y: event.clientY };
-      this.canvas.style.cursor = next === "rotate" ? "grabbing" : next === "pan" ? "move" : this.tool === "draw" ? "crosshair" : "default";
+      this.canvas.style.cursor = next === "rotate" ? "grabbing" : next === "pan" ? "move" : this.restCursor();
       return;
     }
     const last = this.last ?? { x: event.clientX, y: event.clientY };
@@ -323,11 +439,26 @@ export class Stage {
 
   private dragTo(event: PointerEvent) {
     const press = this.press;
-    const building = this.selected();
-    if (!press?.drag || !building || press.moved < 4) return;
+    const drag = press?.drag;
+    if (!press || !drag) return;
     const to = this.groundAt(event.clientX, event.clientY);
     if (!to) return;
-    const drag = press.drag;
+    if (drag.kind === "paint") {
+      const building = this.buildings.find((entry) => entry.id === drag.id);
+      const index = cellAt(building?.plans?.[drag.edge], to);
+      if (index < 0 || drag.seen.includes(index)) return;
+      drag.seen.push(index);
+      this.events.onPaint(drag.id, drag.edge, drag.seen.slice(), drag.active, false);
+      return;
+    }
+    if (press.moved < 4) return;
+    if (drag.kind === "obstacle") {
+      drag.center = [drag.base[0] + to[0] - drag.from[0], drag.base[1] + to[1] - drag.from[1]];
+      this.events.onMoveObstacle(drag.id, drag.edge, drag.obstacle, drag.center, false);
+      return;
+    }
+    const building = this.selected();
+    if (!building) return;
     let outline: XY[];
     if (drag.kind === "edge") {
       const a = drag.base[drag.edge];
@@ -354,13 +485,16 @@ export class Stage {
     const clean = press != null && !this.chord && press.moved < 5;
     this.onPointer(event);
     if (event.buttons !== 0) return;
-    if (press?.current && this.selectedId) this.events.onEdit(this.selectedId, press.current, true);
+    const drag = press?.drag;
+    if (drag?.kind === "paint") this.events.onPaint(drag.id, drag.edge, drag.seen, drag.active, true);
+    else if (drag?.kind === "obstacle" && drag.center) this.events.onMoveObstacle(drag.id, drag.edge, drag.obstacle, drag.center, true);
+    else if (press?.current && this.selection.id) this.events.onEdit(this.selection.id, press.current, true);
     else if (clean) this.click(event);
     this.chord = false;
     this.press = null;
     this.last = null;
     this.mode = "idle";
-    this.canvas.style.cursor = this.tool === "draw" ? "crosshair" : "default";
+    this.canvas.style.cursor = this.restCursor();
   };
 
   private click(event: PointerEvent) {
@@ -377,22 +511,37 @@ export class Stage {
       this.dirty = true;
       return;
     }
+    if (this.tool !== "select") {
+      const face = point && this.flat ? this.faceAt(point) : null;
+      if (face && point) this.events.onPlaceObstacle(face.building.id, face.edge, this.tool as ObstacleKind, point);
+      return;
+    }
     this.events.onSelect(this.pick(event, point));
   }
 
-  private pick(event: PointerEvent, point: XY | null): string | null {
-    if (this.flat) {
-      if (!point) return null;
-      for (let index = this.buildings.length - 1; index >= 0; index -= 1) {
-        if (pointInPolygon(point, this.buildings[index].outline)) return this.buildings[index].id;
-      }
-      return null;
+  private pick(event: PointerEvent, ground: XY | null): Selection {
+    let point = ground;
+    if (!this.flat) {
+      /* Räumlich zählt die Stelle, an der der Blick das Gebäude trifft, nicht der Boden dahinter. */
+      const rect = this.canvas.getBoundingClientRect();
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1)), this.camera);
+      const hit = ray.intersectObjects(this.group.children.filter((child) => (child as THREE.Mesh).isMesh), false)[0];
+      if (!hit) return this.step === "module" ? this.selection : NO_SELECTION;
+      point = [hit.point.x, -hit.point.z];
+      if (this.step === "gebaeude") return { id: hit.object.userData.id as string, edge: null, obstacle: null };
     }
-    const rect = this.canvas.getBoundingClientRect();
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1)), this.camera);
-    const hit = ray.intersectObjects(this.group.children, false)[0];
-    return hit ? (hit.object.userData.id as string) : null;
+    if (!point) return this.step === "module" ? this.selection : NO_SELECTION;
+    if (this.step === "gebaeude") {
+      const obstacle = this.obstacleAt(point);
+      if (obstacle) return { id: obstacle.building.id, edge: obstacle.edge, obstacle: obstacle.obstacle };
+      for (let index = this.buildings.length - 1; index >= 0; index -= 1) {
+        if (pointInPolygon(point, this.buildings[index].outline)) return { id: this.buildings[index].id, edge: null, obstacle: null };
+      }
+    }
+    const face = this.faceAt(point);
+    if (!face) return this.step === "module" ? this.selection : NO_SELECTION;
+    return { id: face.building.id, edge: this.step === "module" ? face.edge : null, obstacle: null };
   }
 
   private onDouble = () => {
@@ -484,13 +633,33 @@ export class Stage {
       for (const building of this.buildings) {
         const model = this.models.get(building.id);
         if (!model) continue;
-        const chosen = building.id === this.selectedId;
+        const chosen = building.id === this.selection.id;
+        const planning = this.step === "module";
         for (const face of model.faces) {
-          parts.push(`<polygon class="r3d-face${chosen ? " is-selected" : ""}" points="${path(face.ring.map((point): XY => [point[0], point[1]]))}"/>`);
+          const here = chosen && (!planning || this.selection.edge === face.edge);
+          parts.push(`<polygon class="r3d-face${here ? " is-selected" : ""}" points="${path(face.ring.map((point): XY => [point[0], point[1]]))}"/>`);
         }
-        parts.push(`<polygon class="r3d-outline${chosen ? " is-selected" : ""}" points="${path(building.outline)}"/>`);
+        parts.push(`<polygon class="r3d-outline${chosen && !planning ? " is-selected" : ""}" points="${path(building.outline)}"/>`);
+        for (const face of model.faces) {
+          const plan = building.plans?.[face.edge];
+          if (!plan) continue;
+          const frame = faceFrame(building, face);
+          const open = planning && chosen && this.selection.edge === face.edge;
+          for (const cell of plan.modules) {
+            if (cell.active) parts.push(`<polygon class="r3d-module" points="${path(cell.corners)}"/>`);
+            else if (open) {
+              const a = this.screen(cell.corners[0]);
+              const c = this.screen(cell.corners[2]);
+              parts.push(`<polygon class="r3d-cell" points="${path(cell.corners)}"/><text class="r3d-plus" x="${((a.x + c.x) / 2).toFixed(1)}" y="${((a.y + c.y) / 2 + 5).toFixed(1)}" text-anchor="middle">+</text>`);
+            }
+          }
+          for (const obstacle of plan.obstacles) {
+            const picked = chosen && this.selection.obstacle === obstacle.id;
+            parts.push(`<polygon class="r3d-obstacle is-${obstacle.kind}${picked ? " is-selected" : ""}" points="${path(obstacleRing(frame, obstacle))}"/>`);
+          }
+        }
       }
-      const building = this.selected();
+      const building = this.step === "gebaeude" && !this.selection.obstacle ? this.selected() : null;
       if (building) {
         const lengths = edgeLengths(building.outline);
         building.outline.forEach((corner, edge) => {
@@ -509,8 +678,10 @@ export class Stage {
     }
     if (!topDown && this.tiltGoal == null) {
       /* Räumliche Ansicht: das gewählte Dach bekommt Umrisslinien, auch durch das Gebäude hindurch. */
-      const model = this.selectedId ? this.models.get(this.selectedId) : null;
+      const model = this.selection.id ? this.models.get(this.selection.id) : null;
+      const only = this.step === "module" ? this.selection.edge : null;
       for (const face of model?.faces ?? []) {
+        if (only != null && face.edge !== only) continue;
         const corners = face.ring.map((point) => this.screen([point[0], point[1]], point[2]));
         if (corners.every((corner) => corner.visible)) parts.push(`<polygon class="r3d-edge3d" points="${corners.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}"/>`);
       }
@@ -569,6 +740,20 @@ function meshOf(polygons: Point3[][]): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
   geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Umrisslinien der Vielecke, um `above` Meter angehoben, damit sie nicht in der Fläche flimmern. */
+function framesOf(polygons: Point3[][], above: number): THREE.BufferGeometry {
+  const positions: number[] = [];
+  for (const ring of polygons) {
+    ring.forEach((point, index) => {
+      const next = ring[(index + 1) % ring.length];
+      positions.push(point[0], point[2] + above, -point[1], next[0], next[2] + above, -next[1]);
+    });
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
   return geometry;
 }
 
