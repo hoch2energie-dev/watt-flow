@@ -331,11 +331,11 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
             ? "Zuerst im Schritt Gebäude ein Dach zeichnen."
             : !plan?.placement
               ? "Dachseite anklicken und rechts ein Modul wählen."
-              : "Plätze anklicken oder mit gedrückter Maustaste überstreichen. Ein Klick auf ein Modul nimmt es wieder heraus."
+              : "Plätze anklicken oder mit gedrückter Maustaste überstreichen. Ein Klick auf ein Modul nimmt es wieder heraus. Aufbauten lassen sich auch hier verschieben."
           : locked || !selected
             ? null
             : obstacle
-              ? "Aufbau ziehen, um ihn zu verschieben. An den Griffen ziehen, um ihn breiter oder länger zu machen."
+              ? "Auf den Aufbau drücken und ziehen, um ihn zu verschieben. An den weißen Griffen ziehen, um ihn breiter oder länger zu machen."
               : flat
                 ? "Punkt in der Kantenmitte ziehen, um die Seite zu verschieben. Im Dach ziehen, um das ganze Gebäude zu bewegen."
                 : "Umriss und Lage des Gebäudes lassen sich in der Draufsicht (2D) ändern. Aufbauten und Module gehen in beiden Ansichten.";

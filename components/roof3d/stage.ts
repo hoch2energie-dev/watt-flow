@@ -445,22 +445,23 @@ export class Stage {
   }
 
   /**
-   * Griffe eines Aufbaus am Bildschirm, mit ihrem Fangbereich. Ist der Aufbau im Bild klein,
-   * bleiben nur die vier Eckgriffe und der Fangbereich schrumpft: So bleibt die Mitte zum Verschieben frei.
+   * Griffe eines Aufbaus am Bildschirm. Ist der Aufbau im Bild klein, bleiben nur die vier Eckgriffe.
+   * `inner` ist der Fangbereich, wenn die Maus auf dem Aufbau selbst steht: Er ist eng, denn der
+   * Aufbau gehört dem Verschieben. Von außen fängt ein Griff großzügig (HANDLE_PX).
    */
-  private gripsOf(frame: FaceFrame, obstacle: ObstacleSpec): { grips: { grip: Grip; at: { x: number; y: number; visible: boolean } }[]; reach: number } {
+  private gripsOf(frame: FaceFrame, obstacle: ObstacleSpec): { grips: { grip: Grip; at: { x: number; y: number; visible: boolean } }[]; inner: number } {
     const all = gripPoints(frame, obstacle).map((entry) => ({ grip: entry.grip, at: this.at(entry.point, frame) }));
-    if (all.length < 8) return { grips: [], reach: 0 };
+    if (all.length < 8) return { grips: [], inner: 0 };
     const span = (a: number, b: number) => Math.hypot(all[a].at.x - all[b].at.x, all[a].at.y - all[b].at.y);
     const small = Math.min(span(7, 3), span(1, 5));
     return {
       grips: small < 30 ? all.filter((entry) => entry.grip.da !== 0 && entry.grip.ds !== 0) : all,
-      reach: Math.min(HANDLE_PX, Math.max(4, small / 3)),
+      inner: Math.min(4.5, Math.max(2.5, small / 6)),
     };
   }
 
-  /** Griff des gewählten Aufbaus unter dem Mauszeiger. */
-  private gripAt(clientX: number, clientY: number): { id: string; edge: number; obstacle: ObstacleSpec; grip: Grip } | null {
+  /** Griff des gewählten Aufbaus unter dem Mauszeiger. `spot` ist, was dort liegt: Steht die Maus auf dem Aufbau, hat das Verschieben Vorrang. */
+  private gripAt(clientX: number, clientY: number, spot: Spot | null): { id: string; edge: number; obstacle: ObstacleSpec; grip: Grip } | null {
     const building = this.selected();
     const edge = this.selection.edge;
     if (!building || edge == null || !this.selection.obstacle || this.step !== "gebaeude" || this.tool !== "select") return null;
@@ -468,7 +469,8 @@ export class Stage {
     const frame = this.frameOf(building, edge);
     if (!obstacle || !frame || !this.facing(frame)) return null;
     const rect = this.canvas.getBoundingClientRect();
-    const { grips, reach } = this.gripsOf(frame, obstacle);
+    const { grips, inner } = this.gripsOf(frame, obstacle);
+    const reach = spot?.obstacle === obstacle.id ? inner : HANDLE_PX;
     let best: { grip: Grip; distance: number } | null = null;
     for (const entry of grips) {
       const distance = Math.hypot(entry.at.x - (clientX - rect.left), entry.at.y - (clientY - rect.top));
@@ -494,10 +496,14 @@ export class Stage {
 
   private dragAt(event: PointerEvent): Press["drag"] {
     if (this.tool === "draw") return null;
-    const grip = this.gripAt(event.clientX, event.clientY);
-    if (grip) return { kind: "resize", ...grip, shape: null };
     const spot = this.spotAt(event.clientX, event.clientY);
+    const grip = this.gripAt(event.clientX, event.clientY, spot);
+    if (grip) return { kind: "resize", ...grip, shape: null };
+    /* Ein Aufbau lässt sich in beiden Schritten und beiden Ansichten greifen und verschieben. */
+    const held = spot?.obstacle && spot.edge != null ? spot.building.plans?.[spot.edge]?.obstacles.find((entry) => entry.id === spot.obstacle) : null;
+    const move: Press["drag"] = spot && held && spot.edge != null ? { kind: "obstacle", id: spot.building.id, edge: spot.edge, obstacle: held.id, base: held.center, from: spot.point, center: null } : null;
     if (this.step === "module") {
+      if (move) return move;
       /* Belegt wird nur auf der gewählten Fläche. Ein Klick auf eine andere Fläche wählt sie erst aus. */
       if (!spot || spot.edge == null || spot.building.id !== this.selection.id || spot.edge !== this.selection.edge) return null;
       const plan = spot.building.plans?.[spot.edge];
@@ -511,10 +517,7 @@ export class Stage {
       /* Aufbau setzen: Klick nimmt die Standardgröße, Ziehen zieht das Rechteck auf. */
       return spot && spot.edge != null ? { kind: "place", id: spot.building.id, edge: spot.edge, tool: this.tool, from: spot.point, shape: null } : null;
     }
-    if (spot?.obstacle && spot.edge != null) {
-      const obstacle = spot.building.plans?.[spot.edge]?.obstacles.find((entry) => entry.id === spot.obstacle);
-      if (obstacle) return { kind: "obstacle", id: spot.building.id, edge: spot.edge, obstacle: obstacle.id, base: obstacle.center, from: spot.point, center: null };
-    }
+    if (move) return move;
     /* Kanten schieben und das Gebäude verschieben geht auf dem Luftbild, also nur in der Draufsicht. */
     const from = this.flat ? this.groundAt(event.clientX, event.clientY) : null;
     const building = this.selected();
@@ -569,8 +572,10 @@ export class Stage {
       this.dragTo(event);
     } else if (this.tool === "draw") {
       this.hoverAt(event);
-    } else if (this.mode === "idle" && this.selection.obstacle) {
-      this.canvas.style.cursor = this.gripAt(event.clientX, event.clientY) ? "pointer" : this.restCursor();
+    } else if (this.mode === "idle" && this.tool === "select") {
+      /* Der Mauszeiger sagt, was ein Druck hier täte: Griff ziehen oder Aufbau verschieben. */
+      const spot = this.spotAt(event.clientX, event.clientY);
+      this.canvas.style.cursor = this.gripAt(event.clientX, event.clientY, spot) ? "pointer" : spot?.obstacle ? "move" : this.restCursor();
     }
     this.last = { x: event.clientX, y: event.clientY };
   };
