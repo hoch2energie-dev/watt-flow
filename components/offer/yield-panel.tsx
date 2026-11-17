@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { calculatePvgis } from "@/app/actions/yield";
 import { Field, NumberField, SelectInput, TextInput } from "@/components/fields";
@@ -83,19 +84,18 @@ export function YieldPanel({
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h3 className="font-semibold">Dachflächen und PVGIS</h3>
-          <p className="text-xs text-muted">Kompassrose: 0 Nord, 90 Ost, 180 Süd, 270 West. Mehrere Flächen werden addiert. Die Dachplanung setzt Grundriss, Module und Verschattung auf dieselben Flächen.</p>
+          <p className="text-xs text-muted">Kompassrose: 0 Nord, 90 Ost, 180 Süd, 270 West. Mehrere Flächen werden addiert. Die 3D-Planung setzt Grundriss, Aufbauten und Module auf dieselben Flächen.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {onPlan ? (
-            <Button type="button" size="sm" onClick={onPlan}>3D-Planung</Button>
-          ) : (
-            <ButtonLink href={`/angebote/${offer.id}/dach3d?variante=${variant.id}`} size="sm">3D-Planung</ButtonLink>
-          )}
-          <ButtonLink href={`/angebote/${offer.id}/dach?variante=${variant.id}`} variant="secondary" size="sm">Dach planen</ButtonLink>
+          {onPlan ? null : <ButtonLink href={`/angebote/${offer.id}/dach3d?variante=${variant.id}`} size="sm">3D-Planung</ButtonLink>}
           <Button type="button" size="sm" disabled={busy} onClick={() => void calculate()}>{busy ? "PVGIS rechnet…" : "Ertrag berechnen (PVGIS)"}</Button>
         </div>
       </div>
       {variant.yieldNotice ? <Notice tone="warn">{variant.yieldNotice} Es gilt der spezifische Ertrag.</Notice> : null}
+      <p className="text-xs text-muted">
+        Verschattung und Gebäudedaten NRW gibt es vorerst noch in der{" "}
+        <Link className="font-semibold text-brand" href={`/angebote/${offer.id}/dach?variante=${variant.id}`}>bisherigen Dachplanung</Link>.
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Breite" hint="Leer lassen, dann wird die Objektadresse gesucht.">
           <NumberField digits={5} value={offer.latitude ?? 0} onChange={(latitude) => onOffer({ latitude: latitude === 0 ? null : latitude, locationSource: latitude === 0 ? offer.locationSource : "manuell" })} />

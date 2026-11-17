@@ -109,7 +109,7 @@ export function OfferPlanner3D({
       const known = filled.every((face) => catalog.some((item) => item.id === face.geometry?.placement?.catalogItemId));
       notes.push(known ? "Die Modulposition im Angebot steht auf dieser Stückzahl." : "Ein Modul fehlt im Katalog, die Modulposition im Angebot bitte von Hand anpassen.");
     } else {
-      notes.push(`Gespeichert. ${planned === 1 ? "Eine Dachfläche steht" : `${planned} Dachflächen stehen`} mit Neigung und Ausrichtung im Schritt Solar.`);
+      notes.push(`Gespeichert. ${planned === 1 ? "Eine Dachfläche steht" : `${planned} Dachflächen stehen`} mit Neigung und Ausrichtung im Angebot.`);
       const before = variant.faces.some((face) => face.geometry?.placement && activeModuleCount(face.geometry) > 0);
       notes.push(before ? "Es liegen keine Module mehr, die Modulposition im Angebot bitte prüfen." : "Module lassen sich im Schritt 2 setzen.");
     }
@@ -122,7 +122,7 @@ export function OfferPlanner3D({
       /* Gespeichert ist an dieser Stelle schon. Scheitert die Ertragsrechnung, bleibt es dabei und es gibt nur einen Hinweis. */
       const computed = await calculatePvgis({ offerId: offer.id, variantId: variant.id, address: siteAddress, latitude: place.latitude, longitude: place.longitude, systemKwp, faces }).catch(() => ({
         ok: false as const,
-        notice: "Die Ertragsrechnung war nicht erreichbar. Im Schritt Solar lässt sie sich nachholen.",
+        notice: "Die Ertragsrechnung war nicht erreichbar. Sie lässt sich im Angebot unter Photovoltaik nachholen.",
       }));
       const patch: Partial<VariantDTO> = computed.ok
         ? { specificYield: computed.specificYield, yieldProvider: "pvgis", yieldAnnualKwh: computed.annualKwh, yieldMonthlyKwh: computed.monthlyKwh, yieldKey: computed.yieldKey, yieldNotice: "" }

@@ -121,6 +121,9 @@ export const demoCatalog: CatalogOption[] = [
 
 export const demoMeta = {
   customerName: "Marlene Beispiel",
+  customerId: "demo-kunde",
+  customerEmail: "marlene@beispiel.example",
+  customerPhone: "0221 5550100",
   requestId: "demo-anfrage",
   requestNumber: "R-2026-0031",
   siteAddress: "Musterweg 12, 50667 Köln",

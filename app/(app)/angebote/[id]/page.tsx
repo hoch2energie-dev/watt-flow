@@ -30,6 +30,9 @@ export default async function OfferPage({ params }: { params: Promise<{ id: stri
       catalog={catalog.map(toCatalogOption)}
       meta={{
         customerName: customerName(offer.request.customer),
+        customerId: offer.request.customerId,
+        customerEmail: offer.request.customer.email ?? "",
+        customerPhone: offer.request.customer.phone ?? "",
         requestId: offer.requestId,
         requestNumber: offer.request.number,
         siteAddress: addressLine(offer.request),

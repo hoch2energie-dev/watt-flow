@@ -1,22 +1,35 @@
 "use client";
 
-import { ArrowRight, Check, Circle } from "lucide-react";
+import { ArrowRight, Car, Check, Circle, Flame, Plus, Zap, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui";
 import type { CalcResult } from "@/lib/calc/offer";
 import type { OfferDTO, VariantDTO } from "@/lib/domain";
-import { formatEuro, formatNumber, formatPercent } from "@/lib/format";
-import { PAYMENT_LABEL } from "@/lib/labels";
-import { solarProgress, stepItems, stepNet, stepValue, type StepId } from "@/lib/offer-overview";
+import { PLAN_TOPICS, THEMES, TOPIC_LABEL, baselineTiles, planSummary, solarProgress, type PlanTopic, type ThemeId, type TopicId } from "@/lib/offer-overview";
+
+const THEME_STYLE: Record<ThemeId, { icon: LucideIcon; chip: string }> = {
+  strom: { icon: Zap, chip: "bg-amber-100 text-amber-800" },
+  waerme: { icon: Flame, chip: "bg-accent-soft text-accent" },
+  mobilitaet: { icon: Car, chip: "bg-sky-100 text-sky-800" },
+};
+
+const PLAN_EMPTY: Record<PlanTopic, string> = {
+  pv: "Dach zeichnen, Module belegen, Wechselrichter wählen.",
+  speicher: "Noch kein Speicher im Angebot.",
+  waermepumpe: "Noch keine Wärmepumpe im Angebot.",
+  wallbox: "Noch keine Wallbox im Angebot.",
+  extras: "Zusätzliche Positionen wie Gerüst oder Zählerschrank.",
+};
 
 /**
- * Übersicht des Angebots in Kacheln: je Thema der Stand, der Preis und der Weg in die Bearbeitung.
- * Zeigt dieselben Daten wie die Schritte, nur nebeneinander.
+ * Reiter „Planung": oben je Thema die Ausgangslage beim Kunden, darunter die Anlagen
+ * der gewählten Variante. Jede Kachel führt in ihren Bearbeitungsbereich.
  */
-export function OfferHub({
+export function PlanningHub({
   offer,
   variant,
   result,
   locked,
+  variantBar,
   onOpen,
   onPlan,
 }: {
@@ -24,116 +37,114 @@ export function OfferHub({
   variant: VariantDTO;
   result: CalcResult;
   locked: boolean;
-  onOpen: (step: StepId) => void;
+  /** Auswahl und Verwaltung der Varianten, steht neben der Überschrift „Planung". */
+  variantBar: React.ReactNode;
+  onOpen: (topic: TopicId) => void;
   /** Speichert und öffnet die 3D-Planung. */
   onPlan: () => void;
 }) {
+  const baseline = baselineTiles(offer);
   const progress = solarProgress(variant);
-  const solarNet = stepNet(result, "solar");
-  const systems: { id: StepId; title: string; empty: string }[] = [
-    { id: "speicher", title: "Speicher", empty: "Noch kein Speicher im Angebot." },
-    { id: "wallbox", title: "Wallbox", empty: "Noch keine Wallbox im Angebot." },
-    { id: "waerme", title: "Wärmepumpe", empty: "Noch keine Wärmepumpe im Angebot." },
-    { id: "extras", title: "Extras", empty: "Zusätzliche Positionen wie Gerüst oder Zählerschrank." },
-  ];
   return (
-    <div className="mt-4 space-y-6">
-      <section aria-labelledby="hub-grundlagen">
-        <h2 id="hub-grundlagen" className="mb-2 font-display text-xl">Grundlagen</h2>
-        <div className="grid gap-3 md:grid-cols-3">
-          {([["verbrauch", "Verbrauch", "Stromverbrauch und Strompreis"], ["gebaeude", "Gebäude", "Gebäudetyp, Dach und Besonderheiten"], ["bestand", "Bestand", "Vorhandene Anlagen und Heizung"]] as const).map(([id, title, hint]) => {
-            const value = stepValue(id, offer, variant, result);
+    <div className="mt-5 space-y-8">
+      <section aria-labelledby="hub-ausgangslage">
+        <h2 id="hub-ausgangslage" className="sr-only">Ausgangslage beim Kunden</h2>
+        <div className="grid gap-x-4 gap-y-6 lg:grid-cols-3">
+          {THEMES.map((theme) => {
+            const { icon: Icon, chip } = THEME_STYLE[theme.id];
             return (
-              <Tile key={id} title={title} filled={Boolean(value)}>
-                <p className={value ? "text-lg font-semibold" : "text-sm text-muted"}>{value || hint}</p>
-                <TileAction onClick={() => onOpen(id)}>{value ? "Bearbeiten" : "Eintragen"}</TileAction>
-              </Tile>
+              <div key={theme.id} className="min-w-0 space-y-3" data-theme={theme.id}>
+                <h3 className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-semibold ${chip}`}>
+                  <Icon size={16} aria-hidden /> {theme.label}
+                </h3>
+                {baseline[theme.id].map((tile) => (
+                  <Tile key={tile.id} id={tile.id} title={tile.title} filled={Boolean(tile.value)}>
+                    {tile.value ? (
+                      <>
+                        <p className="text-xl font-semibold tabular-nums">{tile.value}</p>
+                        {tile.detail ? <p className="text-sm text-muted">{tile.detail}</p> : null}
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted">{tile.empty}</p>
+                    )}
+                    <TileAction>
+                      <Button type="button" size="sm" variant="secondary" onClick={() => onOpen(tile.topic)}>
+                        {tile.value ? "Bearbeiten" : locked ? "Ansehen" : "Eintragen"} <ArrowRight size={15} aria-hidden />
+                      </Button>
+                    </TileAction>
+                  </Tile>
+                ))}
+              </div>
             );
           })}
         </div>
       </section>
 
       <section aria-labelledby="hub-planung">
-        <h2 id="hub-planung" className="mb-2 font-display text-xl">Planung · {variant.name}</h2>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <Tile title="Photovoltaik" filled={progress.roof || progress.modules || result.kwp > 0} className="md:row-span-2">
-            <p className="text-lg font-semibold">{result.kwp > 0 ? `${formatNumber(result.kwp, 2)} kWp geplant` : "Noch nicht geplant"}</p>
-            {solarNet > 0 ? <p className="text-sm text-muted">{formatEuro(solarNet)} netto</p> : null}
-            <ul className="mt-3 space-y-1.5 text-sm">
-              <Step done={progress.roof}>Dach in der 3D-Planung</Step>
-              <Step done={progress.modules}>Module gewählt</Step>
-              <Step done={progress.inverter}>Wechselrichter gewählt</Step>
-            </ul>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button type="button" size="sm" onClick={onPlan}>Zur 3D-Planung <ArrowRight size={15} aria-hidden /></Button>
-              <Button type="button" size="sm" variant="secondary" onClick={() => onOpen("solar")}>Komponenten</Button>
-            </div>
-          </Tile>
-          {systems.map((system) => {
-            const count = stepItems(variant, system.id);
-            const net = stepNet(result, system.id);
-            return (
-              <Tile key={system.id} title={system.title} filled={count > 0}>
-                {count > 0 ? (
-                  <>
-                    <p className="text-lg font-semibold">{formatEuro(net)}</p>
-                    <p className="text-sm text-muted">{count === 1 ? "1 Position" : `${count} Positionen`}, netto</p>
-                  </>
-                ) : (
-                  <p className="text-sm text-muted">{system.empty}</p>
-                )}
-                <TileAction onClick={() => onOpen(system.id)}>{count > 0 ? "Bearbeiten" : locked ? "Ansehen" : "Planung starten"}</TileAction>
-              </Tile>
-            );
-          })}
+        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h2 id="hub-planung" className="font-display text-2xl">Planung</h2>
+          {variantBar}
         </div>
-      </section>
-
-      <section aria-labelledby="hub-abschluss">
-        <h2 id="hub-abschluss" className="mb-2 font-display text-xl">Abschluss</h2>
-        <div className="grid gap-3 md:grid-cols-2">
-          <Tile title="Zahlung" filled>
-            <p className="text-lg font-semibold">{formatEuro(result.financing.customerPays)}</p>
-            <p className="text-sm text-muted">
-              {PAYMENT_LABEL[variant.paymentMode]}
-              {result.financing.mode !== "BAR" ? ` · Rate ${formatEuro(result.financing.payment)}` : ""}
-              {variant.rebateNet > 0 ? ` · Rabatt ${formatEuro(variant.rebateNet)} netto` : ""}
-            </p>
-            <TileAction onClick={() => onOpen("zahlung")}>Bearbeiten</TileAction>
-          </Tile>
-          <Tile title="Ergebnisse" filled={result.kwp > 0}>
-            {result.kwp > 0 ? (
-              <dl className="grid grid-cols-3 gap-2 text-sm">
-                <Figure label="Amortisation" value={result.kpis.breakEvenYears == null ? "–" : `${formatNumber(result.kpis.breakEvenYears, 1)} Jahre`} />
-                <Figure label="Autarkie" value={formatPercent(result.self.autarkyRatio, 0)} />
-                <Figure label="Eigenverbrauch" value={formatPercent(result.self.selfConsumptionRatio, 0)} />
-              </dl>
-            ) : (
-              <p className="text-sm text-muted">Wirtschaftlichkeit und Energiebilanz erscheinen, sobald eine Anlagengröße steht.</p>
-            )}
-            <TileAction onClick={() => onOpen("ergebnisse")}>Ansehen</TileAction>
-          </Tile>
+        <div className="grid gap-4 lg:grid-cols-3">
+          {THEMES.map((theme) => (
+            <div key={theme.id} className="min-w-0 space-y-4" data-plan-theme={theme.id}>
+              {PLAN_TOPICS[theme.id].map((topic) => {
+                const summary = planSummary(topic, variant, result);
+                if (topic === "pv") {
+                  return (
+                    <Tile key={topic} id={topic} title="Photovoltaikanlage" filled={summary.filled}>
+                      <p className="text-xl font-semibold tabular-nums">{summary.value || "Noch nicht geplant"}</p>
+                      {summary.detail ? <p className="text-sm text-muted">{summary.detail}</p> : null}
+                      <ul className="mt-3 space-y-1.5 border-l border-line pl-3 text-sm">
+                        <Step done={progress.roof}>Gebäude gezeichnet</Step>
+                        <Step done={progress.layout}>Modulbelegung</Step>
+                        <Step done={progress.inverter}>Wechselrichter gewählt</Step>
+                      </ul>
+                      {progress.modules && !progress.layout ? <p className="mt-2 text-xs text-muted">Module stehen in den Positionen, sind aber noch nicht auf dem Dach belegt.</p> : null}
+                      <TileAction>
+                        <Button type="button" size="sm" onClick={onPlan}>Zur 3D-Planung <ArrowRight size={15} aria-hidden /></Button>
+                        <Button type="button" size="sm" variant="secondary" onClick={() => onOpen("pv")}>Preise und Ertrag</Button>
+                      </TileAction>
+                    </Tile>
+                  );
+                }
+                return (
+                  <Tile key={topic} id={topic} title={TOPIC_LABEL[topic]} filled={summary.filled}>
+                    {summary.filled ? (
+                      <>
+                        <p className="text-xl font-semibold tabular-nums">{summary.value}</p>
+                        {summary.detail ? <p className="text-sm text-muted">{summary.detail}</p> : null}
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted">{PLAN_EMPTY[topic]}</p>
+                    )}
+                    <TileAction>
+                      <Button type="button" size="sm" variant="secondary" onClick={() => onOpen(topic)}>
+                        {summary.filled ? "Bearbeiten" : locked ? "Ansehen" : <><Plus size={15} aria-hidden /> Planung starten</>}
+                      </Button>
+                    </TileAction>
+                  </Tile>
+                );
+              })}
+            </div>
+          ))}
         </div>
       </section>
     </div>
   );
 }
 
-function Tile({ title, filled, className = "", children }: { title: string; filled: boolean; className?: string; children: React.ReactNode }) {
+function Tile({ id, title, filled, children }: { id: string; title: string; filled: boolean; children: React.ReactNode }) {
   return (
-    <article className={`flex flex-col rounded-2xl border p-4 ${filled ? "border-line bg-white" : "border-dashed border-line bg-elevated"} ${className}`}>
-      <h3 className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-muted">{title}</h3>
+    <article data-tile={id} className={`flex flex-col rounded-2xl border p-4 ${filled ? "border-line bg-white shadow-sm" : "border-dashed border-line bg-elevated"}`}>
+      <h4 className="mb-1 font-semibold">{title}</h4>
       {children}
     </article>
   );
 }
 
-function TileAction({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
-  return (
-    <div className="mt-auto pt-3">
-      <Button type="button" size="sm" variant="secondary" onClick={onClick}>{children}</Button>
-    </div>
-  );
+function TileAction({ children }: { children: React.ReactNode }) {
+  return <div className="mt-auto flex flex-wrap justify-end gap-2 pt-4">{children}</div>;
 }
 
 function Step({ done, children }: { done: boolean; children: React.ReactNode }) {
@@ -143,14 +154,5 @@ function Step({ done, children }: { done: boolean; children: React.ReactNode }) 
       <span>{children}</span>
       <span className="sr-only">{done ? "erledigt" : "offen"}</span>
     </li>
-  );
-}
-
-function Figure({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs text-muted">{label}</dt>
-      <dd className="font-semibold tabular-nums">{value}</dd>
-    </div>
   );
 }
