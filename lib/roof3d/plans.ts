@@ -86,6 +86,69 @@ export function obstacleRing(frame: FaceFrame, obstacle: ObstacleSpec, extra = 0
   return [toPlan(frame, [a - w, s - l]), toPlan(frame, [a + w, s - l]), toPlan(frame, [a + w, s + l]), toPlan(frame, [a - w, s + l])];
 }
 
+/**
+ * Punkt im Grundriss, an dem ein Sehstrahl die Ebene der Dachfläche von oben trifft.
+ * Welt: x Ost, y Höhe, z Süd. Null, wenn der Blick von unten oder an der Fläche entlang kommt.
+ */
+export function rayOnFace(frame: FaceFrame, origin: readonly [number, number, number], dir: readonly [number, number, number]): XY | null {
+  const [ix, iy] = frame.inward;
+  const falling = dir[1] - frame.slope * (dir[0] * ix - dir[2] * iy);
+  if (falling > -1e-6) return null;
+  const above = origin[1] - frame.wall - frame.slope * ((origin[0] - frame.origin[0]) * ix + (-origin[2] - frame.origin[1]) * iy);
+  const t = -above / falling;
+  if (!(t > 0) || t > 5000) return null;
+  return [origin[0] + dir[0] * t, -(origin[2] + dir[2] * t)];
+}
+
+/** Lage und Maße eines rechteckigen Aufbaus, wie sie die Maus ändert. */
+export type ObstacleShape = Pick<ObstacleSpec, "center" | "widthM" | "lengthM">;
+/** Griff an einem Aufbau: welche Seite er bewegt, entlang der Traufe (`da`) und dachaufwärts (`ds`). */
+export type Grip = { da: -1 | 0 | 1; ds: -1 | 0 | 1 };
+export const GRIPS: Grip[] = [
+  { da: -1, ds: -1 }, { da: 0, ds: -1 }, { da: 1, ds: -1 }, { da: 1, ds: 0 },
+  { da: 1, ds: 1 }, { da: 0, ds: 1 }, { da: -1, ds: 1 }, { da: -1, ds: 0 },
+];
+export const OBSTACLE_LIMITS = { minM: 0.1, maxM: 20 };
+
+function sized(value: number, stepM: number): number {
+  const snapped = stepM > 0 ? Math.round(value / stepM) * stepM : value;
+  return Math.round(Math.min(OBSTACLE_LIMITS.maxM, Math.max(OBSTACLE_LIMITS.minM, snapped)) * 100) / 100;
+}
+
+/** Die acht Griffe eines rechteckigen Aufbaus im Grundriss: vier Ecken, vier Kantenmitten. Freie Formen haben keine. */
+export function gripPoints(frame: FaceFrame, obstacle: ObstacleSpec): { grip: Grip; point: XY }[] {
+  if (obstacle.shape && obstacle.shape.length >= 3) return [];
+  const [a, s] = toRoof(frame, obstacle.center);
+  return GRIPS.map((grip) => ({ grip, point: toPlan(frame, [a + (grip.da * obstacle.widthM) / 2, s + (grip.ds * obstacle.lengthM) / 2]) }));
+}
+
+/**
+ * Zieht einen Griff an die Stelle `point`. Die gegenüberliegende Seite bleibt stehen.
+ * Die Maße rasten auf `stepM`, 0 schaltet das Raster ab.
+ */
+export function resizeObstacle(frame: FaceFrame, obstacle: ObstacleSpec, grip: Grip, point: XY, stepM = 0.05): ObstacleShape {
+  const [a, s] = toRoof(frame, obstacle.center);
+  const [pa, ps] = toRoof(frame, point);
+  let a0 = a - obstacle.widthM / 2;
+  let a1 = a + obstacle.widthM / 2;
+  let s0 = s - obstacle.lengthM / 2;
+  let s1 = s + obstacle.lengthM / 2;
+  if (grip.da === 1) a1 = a0 + sized(pa - a0, stepM);
+  if (grip.da === -1) a0 = a1 - sized(a1 - pa, stepM);
+  if (grip.ds === 1) s1 = s0 + sized(ps - s0, stepM);
+  if (grip.ds === -1) s0 = s1 - sized(s1 - ps, stepM);
+  return { center: toPlan(frame, [(a0 + a1) / 2, (s0 + s1) / 2]), widthM: sized(a1 - a0, 0), lengthM: sized(s1 - s0, 0) };
+}
+
+/** Rechteck zwischen zwei Punkten der Dachfläche, wie beim Aufziehen mit der Maus. Der erste Punkt bleibt eine Ecke. */
+export function spanObstacle(frame: FaceFrame, from: XY, to: XY, stepM = 0.05): ObstacleShape {
+  const [fa, fs] = toRoof(frame, from);
+  const [ta, ts] = toRoof(frame, to);
+  const width = sized(Math.abs(ta - fa), stepM);
+  const length = sized(Math.abs(ts - fs), stepM);
+  return { center: toPlan(frame, [fa + (ta >= fa ? width : -width) / 2, fs + (ts >= fs ? length : -length) / 2]), widthM: width, lengthM: length };
+}
+
 export function newObstacle(id: string, kind: ObstacleKind, center: XY): ObstacleSpec {
   const preset = OBSTACLE_DEFAULTS[kind];
   return { id, kind, center, widthM: preset.widthM, lengthM: preset.lengthM, heightM: preset.heightM, marginM: 0 };

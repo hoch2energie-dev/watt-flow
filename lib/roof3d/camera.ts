@@ -50,20 +50,30 @@ export function cameraPosition(view: View): Vec3 {
   return [view.target[0] - f[0] * view.dist, -f[1] * view.dist, -view.target[1] - f[2] * view.dist];
 }
 
-/** Bodenpunkt unter einer Bildschirmposition. ndc: -1 links/unten bis 1 rechts/oben. */
-export function groundPoint(view: View, ndcX: number, ndcY: number, aspect: number, fovDeg = FOV_DEG): XY | null {
+/** Sehstrahl in Weltkoordinaten (x Ost, y Höhe, z Süd). Die Richtung ist nicht normiert. */
+export type Ray = { origin: Vec3; dir: Vec3 };
+
+/** Sehstrahl durch eine Bildschirmposition. ndc: -1 links/unten bis 1 rechts/oben. */
+export function viewRay(view: View, ndcX: number, ndcY: number, aspect: number, fovDeg = FOV_DEG): Ray {
   const f = forward(view);
   const r = rightOf(view);
   const u = upOf(view);
   const tan = Math.tan((fovDeg * DEG) / 2);
-  const dir: Vec3 = [
-    f[0] + r[0] * ndcX * tan * aspect + u[0] * ndcY * tan,
-    f[1] + r[1] * ndcX * tan * aspect + u[1] * ndcY * tan,
-    f[2] + r[2] * ndcX * tan * aspect + u[2] * ndcY * tan,
-  ];
+  return {
+    origin: cameraPosition(view),
+    dir: [
+      f[0] + r[0] * ndcX * tan * aspect + u[0] * ndcY * tan,
+      f[1] + r[1] * ndcX * tan * aspect + u[1] * ndcY * tan,
+      f[2] + r[2] * ndcX * tan * aspect + u[2] * ndcY * tan,
+    ],
+  };
+}
+
+/** Bodenpunkt unter einer Bildschirmposition. ndc: -1 links/unten bis 1 rechts/oben. */
+export function groundPoint(view: View, ndcX: number, ndcY: number, aspect: number, fovDeg = FOV_DEG): XY | null {
+  const { origin: camera, dir } = viewRay(view, ndcX, ndcY, aspect, fovDeg);
   const length = Math.hypot(dir[0], dir[1], dir[2]);
   if (dir[1] / length > -0.02) return null;
-  const camera = cameraPosition(view);
   const t = -camera[1] / dir[1];
   if (t * length > 3000) return null;
   return [camera[0] + dir[0] * t, -(camera[2] + dir[2] * t)];

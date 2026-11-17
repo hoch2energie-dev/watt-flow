@@ -129,3 +129,8 @@
 .r3d-button.is-primary { background: var(--brand); border-color: var(--brand); color: #fff; }
 .r3d-button.is-primary:hover:not(:disabled) { background: #174a35; }
 .r3d-note.is-below { margin-top: 8px; }
+
+/* Aufbauten: Griffe, Auswahl in der räumlichen Ansicht, Vorschau beim Aufziehen */
+.r3d-grip { fill: #fffdf8; stroke: var(--accent); stroke-width: 2; }
+.r3d-obstacle-ring { fill: rgba(198, 91, 46, 0.12); stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; }
+.r3d-obstacle.is-preview { fill-opacity: 0.55; stroke-dasharray: 5 4; }

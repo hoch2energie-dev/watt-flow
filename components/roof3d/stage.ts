@@ -12,14 +12,30 @@ import {
   panBy,
   pointerMode,
   projectPoint,
+  viewRay,
   wheelNotches,
   zoomBy,
   zoomFactor,
   type PointerMode,
+  type Ray,
   type View,
 } from "@/lib/roof3d/camera";
 import { formatMeters, moveOutline, pushEdge, snapDraft, type SnapResult } from "@/lib/roof3d/draw";
-import { cellAt, faceFrame, heightOnFace, obstacleRing, type FaceFrame, type ObstacleKind } from "@/lib/roof3d/plans";
+import {
+  cellAt,
+  faceFrame,
+  gripPoints,
+  heightOnFace,
+  obstacleRing,
+  rayOnFace,
+  resizeObstacle,
+  spanObstacle,
+  type FaceFrame,
+  type Grip,
+  type ObstacleKind,
+  type ObstacleShape,
+  type ObstacleSpec,
+} from "@/lib/roof3d/plans";
 
 export type Tool = "select" | "draw" | ObstacleKind;
 export type Step = "gebaeude" | "module";
@@ -34,8 +50,11 @@ export type StageEvents = {
   onCreate(outline: XY[]): void;
   /** `done` ist falsch, solange gezogen wird. */
   onEdit(id: string, outline: XY[], done: boolean): void;
-  onPlaceObstacle(id: string, edge: number, kind: ObstacleKind, center: XY): void;
+  /** `size` ist gesetzt, wenn der Aufbau mit der Maus aufgezogen wurde. Sonst gilt die Standardgröße. */
+  onPlaceObstacle(id: string, edge: number, kind: ObstacleKind, center: XY, size: { widthM: number; lengthM: number } | null): void;
   onMoveObstacle(id: string, edge: number, obstacle: string, center: XY, done: boolean): void;
+  /** Ein Griff des Aufbaus wurde gezogen. */
+  onResizeObstacle(id: string, edge: number, obstacle: string, shape: ObstacleShape, done: boolean): void;
   /** Plätze des Modulrasters belegen oder leeren. Genannt sind alle Plätze des laufenden Strichs; eine leere Liste verwirft ihn. */
   onPaint(id: string, edge: number, indexes: number[], active: boolean, done: boolean): void;
   onDraft(points: number): void;
@@ -51,10 +70,17 @@ type Press = {
     | { kind: "edge"; edge: number; base: XY[]; from: XY }
     | { kind: "move"; base: XY[]; from: XY }
     | { kind: "obstacle"; id: string; edge: number; obstacle: string; base: XY; from: XY; center: XY | null }
+    | { kind: "resize"; id: string; edge: number; obstacle: ObstacleSpec; grip: Grip; shape: ObstacleShape | null }
+    | { kind: "place"; id: string; edge: number; tool: ObstacleKind; from: XY; shape: ObstacleShape | null }
     | { kind: "paint"; id: string; edge: number; active: boolean; seen: number[] }
     | null;
   current: XY[] | null;
 };
+
+/** Was der Blick in der räumlichen Ansicht trifft. Hängt an jedem Körper der Szene. */
+type MeshTag = { id: string; kind: "roof" | "wall" | "module" | "aufbau" | "kamin"; edge?: number; obstacle?: string };
+/** Stelle unter dem Mauszeiger: Gebäude, Dachseite (falls getroffen), Aufbau (falls getroffen), Punkt im Grundriss. */
+type Spot = { building: BuildingSpec; edge: number | null; point: XY; obstacle: string | null };
 
 const START_VIEW: View = { target: [0, 0], heading: 0, tilt: 55 * DEG, dist: 60 };
 const HANDLE_PX = 11;
@@ -63,6 +89,9 @@ const HANDLE_PX = 11;
  * Zeichenfläche der 3D-Planung: three.js für Boden und Gebäude, ein SVG darüber für
  * Maße, Griffe und den Umriss beim Zeichnen. In der Draufsicht (2D) werden die Dächer
  * flach im SVG gezeichnet, damit sie deckungsgleich auf dem Luftbild liegen.
+ *
+ * Aufbauten und Module lassen sich in beiden Ansichten bearbeiten. In der Draufsicht zählt
+ * der Bodenpunkt unter der Maus, räumlich die Stelle, an der der Blick die Dachseite trifft.
  */
 export class Stage {
   private renderer: THREE.WebGLRenderer;
@@ -77,6 +106,7 @@ export class Stage {
   private chimneyMaterial = new THREE.MeshLambertMaterial({ color: 0xb9b2a6, side: THREE.DoubleSide });
   private windowMaterial = new THREE.MeshLambertMaterial({ color: 0x7f97a6, side: THREE.DoubleSide });
   private zoneMaterial = new THREE.MeshLambertMaterial({ color: 0xd9a441, side: THREE.DoubleSide });
+  private raycaster = new THREE.Raycaster();
 
   private view: View = { ...START_VIEW };
   private flat = false;
@@ -159,16 +189,16 @@ export class Stage {
     for (const building of buildings) {
       const model = this.models.get(building.id);
       if (!model) continue;
-      const add = (polygons: Point3[][], material: THREE.Material) => {
+      const add = (polygons: Point3[][], material: THREE.Material, tag: Omit<MeshTag, "id">) => {
         if (polygons.length === 0) return;
         const mesh = new THREE.Mesh(meshOf(polygons), material);
-        mesh.userData.id = building.id;
+        mesh.userData = { id: building.id, ...tag } satisfies MeshTag;
         this.group.add(mesh);
       };
-      add(model.faces.map((face) => face.ring), this.roofMaterial);
-      add(model.walls, this.wallMaterial);
+      add(model.faces.map((face) => face.ring), this.roofMaterial, { kind: "roof" });
+      add(model.walls, this.wallMaterial, { kind: "wall" });
       const panels: Point3[][] = [];
-      const solids: Record<ObstacleKind, Point3[][]> = { sperrzone: [], kamin: [], fenster: [] };
+      const flats: Record<"sperrzone" | "fenster", Point3[][]> = { sperrzone: [], fenster: [] };
       for (const face of model.faces) {
         const plan = building.plans?.[face.edge];
         if (!plan) continue;
@@ -178,27 +208,27 @@ export class Stage {
         for (const obstacle of plan.obstacles) {
           const ring = obstacleRing(frame, obstacle);
           if (obstacle.kind !== "kamin") {
-            solids[obstacle.kind].push(ring.map((point) => lift(point, 0.04)));
+            flats[obstacle.kind].push(ring.map((point) => lift(point, 0.04)));
             continue;
           }
+          /* Jeder Kamin ist ein eigener Körper, damit ein Klick auf ihn den richtigen Aufbau wählt. */
           const top = Math.max(...ring.map((point) => heightOnFace(frame, point))) + Math.max(0.2, obstacle.heightM);
-          solids.kamin.push(ring.map((point): Point3 => [point[0], point[1], top]));
+          const body: Point3[][] = [ring.map((point): Point3 => [point[0], point[1], top])];
           ring.forEach((point, index) => {
             const next = ring[(index + 1) % ring.length];
-            solids.kamin.push([lift(point, -0.3), lift(next, -0.3), [next[0], next[1], top], [point[0], point[1], top]]);
+            body.push([lift(point, -0.3), lift(next, -0.3), [next[0], next[1], top], [point[0], point[1], top]]);
           });
+          add(body, this.chimneyMaterial, { kind: "kamin", edge: face.edge, obstacle: obstacle.id });
         }
       }
-      add(panels, this.moduleMaterial);
+      add(panels, this.moduleMaterial, { kind: "module" });
       if (panels.length > 0) {
         /* Rahmenlinien, damit in der räumlichen Ansicht jedes Modul einzeln zu erkennen ist. */
         const frames = new THREE.LineSegments(framesOf(panels, 0.012), this.frameMaterial);
-        frames.userData.id = building.id;
         this.group.add(frames);
       }
-      add(solids.kamin, this.chimneyMaterial);
-      add(solids.fenster, this.windowMaterial);
-      add(solids.sperrzone, this.zoneMaterial);
+      add(flats.fenster, this.windowMaterial, { kind: "aufbau" });
+      add(flats.sperrzone, this.zoneMaterial, { kind: "aufbau" });
     }
     this.dirty = true;
   }
@@ -316,6 +346,31 @@ export class Stage {
     return { x: (projected.x * 0.5 + 0.5) * width, y: (-projected.y * 0.5 + 0.5) * h, visible: projected.visible };
   }
 
+  private rayAt(clientX: number, clientY: number): Ray | null {
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return viewRay(this.view, ((clientX - rect.left) / rect.width) * 2 - 1, -(((clientY - rect.top) / rect.height) * 2 - 1), rect.width / rect.height);
+  }
+
+  /** Punkt auf einer Dachseite unter dem Mauszeiger. Draufsicht: der Bodenpunkt. Räumlich: wo der Blick die Ebene der Dachseite trifft. */
+  private onFace(frame: FaceFrame, clientX: number, clientY: number): XY | null {
+    if (this.flat) return this.groundAt(clientX, clientY);
+    const ray = this.rayAt(clientX, clientY);
+    return ray ? rayOnFace(frame, ray.origin, ray.dir) : null;
+  }
+
+  /** Bildschirmposition eines Punkts auf einer Dachseite. In der Draufsicht liegt alles flach auf dem Luftbild. */
+  private at(point: XY, frame: FaceFrame | null, above = 0.06): { x: number; y: number; visible: boolean } {
+    return this.flat || !frame ? this.screen(point) : this.screen(point, heightOnFace(frame, point) + above);
+  }
+
+  /** Schaut die Kamera von oben auf diese Dachseite? Von unten oder von hinten ist dort nichts zu bearbeiten. */
+  private facing(frame: FaceFrame): boolean {
+    if (this.flat) return true;
+    const camera = cameraPosition(this.view);
+    return camera[1] > heightOnFace(frame, [camera[0], -camera[2]]);
+  }
+
   private metersPerPixel(): number {
     return (2 * this.view.dist * Math.tan((FOV_DEG * DEG) / 2)) / this.size().height;
   }
@@ -329,13 +384,18 @@ export class Stage {
     return face ? faceFrame(building, face) : null;
   }
 
+  private faceOf(building: BuildingSpec, point: XY): number | null {
+    for (const face of this.models.get(building.id)?.faces ?? []) {
+      if (pointInPolygon(point, face.ring.map((corner): XY => [corner[0], corner[1]]))) return face.edge;
+    }
+    return null;
+  }
+
   /** Dachfläche unter einem Punkt des Grundrisses. */
   private faceAt(point: XY): { building: BuildingSpec; edge: number } | null {
     for (let index = this.buildings.length - 1; index >= 0; index -= 1) {
-      const building = this.buildings[index];
-      for (const face of this.models.get(building.id)?.faces ?? []) {
-        if (pointInPolygon(point, face.ring.map((corner): XY => [corner[0], corner[1]]))) return { building, edge: face.edge };
-      }
+      const edge = this.faceOf(this.buildings[index], point);
+      if (edge != null) return { building: this.buildings[index], edge };
     }
     return null;
   }
@@ -354,6 +414,69 @@ export class Stage {
     return null;
   }
 
+  /** Was unter dem Mauszeiger liegt. Räumlich entscheidet der erste Körper, den der Blick trifft. */
+  private spotAt(clientX: number, clientY: number): Spot | null {
+    if (this.flat) {
+      const point = this.groundAt(clientX, clientY);
+      if (!point) return null;
+      const hit = this.obstacleAt(point);
+      if (hit) return { building: hit.building, edge: hit.edge, point, obstacle: hit.obstacle };
+      const face = this.faceAt(point);
+      return face ? { building: face.building, edge: face.edge, point, obstacle: null } : null;
+    }
+    const ray = this.rayAt(clientX, clientY);
+    if (!ray) return null;
+    this.raycaster.set(new THREE.Vector3(...ray.origin), new THREE.Vector3(...ray.dir).normalize());
+    const hit = this.raycaster.intersectObjects(this.group.children.filter((child) => (child as THREE.Mesh).isMesh), false)[0];
+    if (!hit) return null;
+    const tag = hit.object.userData as MeshTag;
+    const building = this.buildings.find((entry) => entry.id === tag.id);
+    if (!building) return null;
+    const rough: XY = [hit.point.x, -hit.point.z];
+    if (tag.kind === "wall") return { building, edge: null, point: rough, obstacle: null };
+    const edge = tag.kind === "kamin" && tag.edge != null ? tag.edge : this.faceOf(building, rough);
+    const frame = edge == null ? null : this.frameOf(building, edge);
+    if (edge == null || !frame) return { building, edge: null, point: rough, obstacle: null };
+    /* Module und Aufbauten liegen etwas über der Dachhaut. Gerechnet wird mit dem Punkt auf der Dachebene. */
+    const point = rayOnFace(frame, ray.origin, ray.dir) ?? rough;
+    if (tag.kind === "kamin" && tag.obstacle) return { building, edge, point, obstacle: tag.obstacle };
+    const flat = (building.plans?.[edge]?.obstacles ?? []).find((obstacle) => obstacle.kind !== "kamin" && pointInPolygon(point, obstacleRing(frame, obstacle)));
+    return { building, edge, point, obstacle: flat?.id ?? null };
+  }
+
+  /**
+   * Griffe eines Aufbaus am Bildschirm, mit ihrem Fangbereich. Ist der Aufbau im Bild klein,
+   * bleiben nur die vier Eckgriffe und der Fangbereich schrumpft: So bleibt die Mitte zum Verschieben frei.
+   */
+  private gripsOf(frame: FaceFrame, obstacle: ObstacleSpec): { grips: { grip: Grip; at: { x: number; y: number; visible: boolean } }[]; reach: number } {
+    const all = gripPoints(frame, obstacle).map((entry) => ({ grip: entry.grip, at: this.at(entry.point, frame) }));
+    if (all.length < 8) return { grips: [], reach: 0 };
+    const span = (a: number, b: number) => Math.hypot(all[a].at.x - all[b].at.x, all[a].at.y - all[b].at.y);
+    const small = Math.min(span(7, 3), span(1, 5));
+    return {
+      grips: small < 30 ? all.filter((entry) => entry.grip.da !== 0 && entry.grip.ds !== 0) : all,
+      reach: Math.min(HANDLE_PX, Math.max(4, small / 3)),
+    };
+  }
+
+  /** Griff des gewählten Aufbaus unter dem Mauszeiger. */
+  private gripAt(clientX: number, clientY: number): { id: string; edge: number; obstacle: ObstacleSpec; grip: Grip } | null {
+    const building = this.selected();
+    const edge = this.selection.edge;
+    if (!building || edge == null || !this.selection.obstacle || this.step !== "gebaeude" || this.tool !== "select") return null;
+    const obstacle = building.plans?.[edge]?.obstacles.find((entry) => entry.id === this.selection.obstacle);
+    const frame = this.frameOf(building, edge);
+    if (!obstacle || !frame || !this.facing(frame)) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const { grips, reach } = this.gripsOf(frame, obstacle);
+    let best: { grip: Grip; distance: number } | null = null;
+    for (const entry of grips) {
+      const distance = Math.hypot(entry.at.x - (clientX - rect.left), entry.at.y - (clientY - rect.top));
+      if (entry.at.visible && distance <= reach && (!best || distance < best.distance)) best = { grip: entry.grip, distance };
+    }
+    return best ? { id: building.id, edge, obstacle, grip: best.grip } : null;
+  }
+
   /* ---------- Maus ---------- */
 
   private onContext = (event: Event) => event.preventDefault();
@@ -370,23 +493,32 @@ export class Stage {
   };
 
   private dragAt(event: PointerEvent): Press["drag"] {
-    const from = this.groundAt(event.clientX, event.clientY);
-    if (!this.flat || !from) return null;
+    if (this.tool === "draw") return null;
+    const grip = this.gripAt(event.clientX, event.clientY);
+    if (grip) return { kind: "resize", ...grip, shape: null };
+    const spot = this.spotAt(event.clientX, event.clientY);
     if (this.step === "module") {
       /* Belegt wird nur auf der gewählten Fläche. Ein Klick auf eine andere Fläche wählt sie erst aus. */
-      const face = this.faceAt(from);
-      const chosen = face && face.building.id === this.selection.id && face.edge === this.selection.edge;
-      const index = face && chosen ? cellAt(face.building.plans?.[face.edge], from) : -1;
-      if (!face || index < 0) return null;
-      const active = !face.building.plans![face.edge].modules[index].active;
-      this.events.onPaint(face.building.id, face.edge, [index], active, false);
-      return { kind: "paint", id: face.building.id, edge: face.edge, active, seen: [index] };
+      if (!spot || spot.edge == null || spot.building.id !== this.selection.id || spot.edge !== this.selection.edge) return null;
+      const plan = spot.building.plans?.[spot.edge];
+      const index = cellAt(plan, spot.point);
+      if (!plan || index < 0) return null;
+      const active = !plan.modules[index].active;
+      this.events.onPaint(spot.building.id, spot.edge, [index], active, false);
+      return { kind: "paint", id: spot.building.id, edge: spot.edge, active, seen: [index] };
     }
-    if (this.tool !== "select") return null;
-    const hit = this.obstacleAt(from);
-    if (hit) return { kind: "obstacle", id: hit.building.id, edge: hit.edge, obstacle: hit.obstacle, base: hit.center, from, center: null };
+    if (this.tool !== "select") {
+      /* Aufbau setzen: Klick nimmt die Standardgröße, Ziehen zieht das Rechteck auf. */
+      return spot && spot.edge != null ? { kind: "place", id: spot.building.id, edge: spot.edge, tool: this.tool, from: spot.point, shape: null } : null;
+    }
+    if (spot?.obstacle && spot.edge != null) {
+      const obstacle = spot.building.plans?.[spot.edge]?.obstacles.find((entry) => entry.id === spot.obstacle);
+      if (obstacle) return { kind: "obstacle", id: spot.building.id, edge: spot.edge, obstacle: obstacle.id, base: obstacle.center, from: spot.point, center: null };
+    }
+    /* Kanten schieben und das Gebäude verschieben geht auf dem Luftbild, also nur in der Draufsicht. */
+    const from = this.flat ? this.groundAt(event.clientX, event.clientY) : null;
     const building = this.selected();
-    if (!building) return null;
+    if (!from || !building) return null;
     const rect = this.canvas.getBoundingClientRect();
     const outline = building.outline;
     for (let edge = 0; edge < outline.length; edge += 1) {
@@ -404,6 +536,10 @@ export class Stage {
       if (this.press && drag?.kind === "paint") {
         this.events.onPaint(drag.id, drag.edge, [], drag.active, true);
         this.press.drag = null;
+      }
+      if (this.press && drag?.kind === "place") {
+        this.press.drag = null;
+        this.dirty = true;
       }
       this.chord = true;
     }
@@ -433,6 +569,8 @@ export class Stage {
       this.dragTo(event);
     } else if (this.tool === "draw") {
       this.hoverAt(event);
+    } else if (this.mode === "idle" && this.selection.obstacle) {
+      this.canvas.style.cursor = this.gripAt(event.clientX, event.clientY) ? "pointer" : this.restCursor();
     }
     this.last = { x: event.clientX, y: event.clientY };
   };
@@ -441,37 +579,49 @@ export class Stage {
     const press = this.press;
     const drag = press?.drag;
     if (!press || !drag) return;
-    const to = this.groundAt(event.clientX, event.clientY);
-    if (!to) return;
+    if (drag.kind === "edge" || drag.kind === "move") {
+      const to = this.groundAt(event.clientX, event.clientY);
+      const building = this.selected();
+      if (!to || !building || press.moved < 4) return;
+      let outline: XY[];
+      if (drag.kind === "edge") {
+        const a = drag.base[drag.edge];
+        const b = drag.base[(drag.edge + 1) % drag.base.length];
+        const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const distance = ((to[0] - drag.from[0]) * (b[1] - a[1]) - (to[1] - drag.from[1]) * (b[0] - a[0])) / length;
+        outline = pushEdge(drag.base, drag.edge, distance);
+        if (signedArea(outline) <= 0 || polygonArea(outline) < 4 || Math.min(...edgeLengths(outline)) < 1) return;
+      } else {
+        outline = moveOutline(drag.base, [to[0] - drag.from[0], to[1] - drag.from[1]]);
+      }
+      press.current = outline;
+      this.events.onEdit(building.id, outline, false);
+      return;
+    }
+    /* Alles Weitere spielt auf einer Dachseite. */
+    const building = this.buildings.find((entry) => entry.id === drag.id);
+    const frame = building ? this.frameOf(building, drag.edge) : null;
+    const to = frame ? this.onFace(frame, event.clientX, event.clientY) : null;
+    if (!building || !frame || !to) return;
     if (drag.kind === "paint") {
-      const building = this.buildings.find((entry) => entry.id === drag.id);
-      const index = cellAt(building?.plans?.[drag.edge], to);
+      const index = cellAt(building.plans?.[drag.edge], to);
       if (index < 0 || drag.seen.includes(index)) return;
       drag.seen.push(index);
       this.events.onPaint(drag.id, drag.edge, drag.seen.slice(), drag.active, false);
       return;
     }
     if (press.moved < 4) return;
+    const step = event.shiftKey ? 0 : 0.05;
     if (drag.kind === "obstacle") {
       drag.center = [drag.base[0] + to[0] - drag.from[0], drag.base[1] + to[1] - drag.from[1]];
       this.events.onMoveObstacle(drag.id, drag.edge, drag.obstacle, drag.center, false);
-      return;
-    }
-    const building = this.selected();
-    if (!building) return;
-    let outline: XY[];
-    if (drag.kind === "edge") {
-      const a = drag.base[drag.edge];
-      const b = drag.base[(drag.edge + 1) % drag.base.length];
-      const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-      const distance = ((to[0] - drag.from[0]) * (b[1] - a[1]) - (to[1] - drag.from[1]) * (b[0] - a[0])) / length;
-      outline = pushEdge(drag.base, drag.edge, distance);
-      if (signedArea(outline) <= 0 || polygonArea(outline) < 4 || Math.min(...edgeLengths(outline)) < 1) return;
+    } else if (drag.kind === "resize") {
+      drag.shape = resizeObstacle(frame, drag.obstacle, drag.grip, to, step);
+      this.events.onResizeObstacle(drag.id, drag.edge, drag.obstacle.id, drag.shape, false);
     } else {
-      outline = moveOutline(drag.base, [to[0] - drag.from[0], to[1] - drag.from[1]]);
+      drag.shape = spanObstacle(frame, drag.from, to, step);
+      this.dirty = true;
     }
-    press.current = outline;
-    this.events.onEdit(building.id, outline, false);
   }
 
   private hoverAt(event: PointerEvent) {
@@ -488,7 +638,14 @@ export class Stage {
     const drag = press?.drag;
     if (drag?.kind === "paint") this.events.onPaint(drag.id, drag.edge, drag.seen, drag.active, true);
     else if (drag?.kind === "obstacle" && drag.center) this.events.onMoveObstacle(drag.id, drag.edge, drag.obstacle, drag.center, true);
-    else if (press?.current && this.selection.id) this.events.onEdit(this.selection.id, press.current, true);
+    else if (drag?.kind === "resize" && drag.shape) this.events.onResizeObstacle(drag.id, drag.edge, drag.obstacle.id, drag.shape, true);
+    else if (drag?.kind === "place") {
+      /* Ein Zittern beim Klicken soll keinen winzigen Aufbau erzeugen: erst ab 20 cm zählt es als Aufziehen. */
+      const drawn = drag.shape && press && press.moved >= 8 && Math.max(drag.shape.widthM, drag.shape.lengthM) >= 0.2 ? drag.shape : null;
+      if (drawn) this.events.onPlaceObstacle(drag.id, drag.edge, drag.tool, drawn.center, { widthM: drawn.widthM, lengthM: drawn.lengthM });
+      else this.events.onPlaceObstacle(drag.id, drag.edge, drag.tool, drag.from, null);
+      this.dirty = true;
+    } else if (press?.current && this.selection.id) this.events.onEdit(this.selection.id, press.current, true);
     else if (clean) this.click(event);
     this.chord = false;
     this.press = null;
@@ -511,37 +668,18 @@ export class Stage {
       this.dirty = true;
       return;
     }
-    if (this.tool !== "select") {
-      const face = point && this.flat ? this.faceAt(point) : null;
-      if (face && point) this.events.onPlaceObstacle(face.building.id, face.edge, this.tool as ObstacleKind, point);
-      return;
-    }
-    this.events.onSelect(this.pick(event, point));
+    /* Aufbauten setzt das Loslassen der Maus (siehe onUp), hier bleibt nur das Auswählen. */
+    if (this.tool !== "select") return;
+    this.events.onSelect(this.pick(event));
   }
 
-  private pick(event: PointerEvent, ground: XY | null): Selection {
-    let point = ground;
-    if (!this.flat) {
-      /* Räumlich zählt die Stelle, an der der Blick das Gebäude trifft, nicht der Boden dahinter. */
-      const rect = this.canvas.getBoundingClientRect();
-      const ray = new THREE.Raycaster();
-      ray.setFromCamera(new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1)), this.camera);
-      const hit = ray.intersectObjects(this.group.children.filter((child) => (child as THREE.Mesh).isMesh), false)[0];
-      if (!hit) return this.step === "module" ? this.selection : NO_SELECTION;
-      point = [hit.point.x, -hit.point.z];
-      if (this.step === "gebaeude") return { id: hit.object.userData.id as string, edge: null, obstacle: null };
-    }
-    if (!point) return this.step === "module" ? this.selection : NO_SELECTION;
-    if (this.step === "gebaeude") {
-      const obstacle = this.obstacleAt(point);
-      if (obstacle) return { id: obstacle.building.id, edge: obstacle.edge, obstacle: obstacle.obstacle };
-      for (let index = this.buildings.length - 1; index >= 0; index -= 1) {
-        if (pointInPolygon(point, this.buildings[index].outline)) return { id: this.buildings[index].id, edge: null, obstacle: null };
-      }
-    }
-    const face = this.faceAt(point);
-    if (!face) return this.step === "module" ? this.selection : NO_SELECTION;
-    return { id: face.building.id, edge: this.step === "module" ? face.edge : null, obstacle: null };
+  private pick(event: PointerEvent): Selection {
+    const spot = this.spotAt(event.clientX, event.clientY);
+    /* Im Schritt Module bleibt die Dachseite gewählt, wenn der Klick danebengeht. */
+    const keep = this.step === "module" ? this.selection : NO_SELECTION;
+    if (!spot) return keep;
+    if (this.step === "gebaeude") return { id: spot.building.id, edge: spot.obstacle ? spot.edge : null, obstacle: spot.obstacle };
+    return spot.edge == null ? keep : { id: spot.building.id, edge: spot.edge, obstacle: null };
   }
 
   private onDouble = () => {
@@ -685,7 +823,22 @@ export class Stage {
         const corners = face.ring.map((point) => this.screen([point[0], point[1]], point[2]));
         if (corners.every((corner) => corner.visible)) parts.push(`<polygon class="r3d-edge3d" points="${corners.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}"/>`);
       }
+      /* Schritt Module: freie Plätze der gewählten Dachseite, solange man von oben auf sie schaut. */
+      const building = this.selected();
+      const plan = only != null ? building?.plans?.[only] : undefined;
+      const frame = building && only != null ? this.frameOf(building, only) : null;
+      if (plan && frame && this.facing(frame)) {
+        for (const cell of plan.modules) {
+          if (cell.active) continue;
+          const corners = cell.corners.map((corner) => this.at(corner, frame));
+          if (!corners.every((corner) => corner.visible)) continue;
+          const x = corners.reduce((sum, corner) => sum + corner.x, 0) / 4;
+          const y = corners.reduce((sum, corner) => sum + corner.y, 0) / 4;
+          parts.push(`<polygon class="r3d-cell" points="${corners.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}"/><text class="r3d-plus" x="${x.toFixed(1)}" y="${(y + 5).toFixed(1)}" text-anchor="middle">+</text>`);
+        }
+      }
     }
+    if (this.tiltGoal == null) parts.push(...this.editMarkup(!topDown));
     if (this.tool === "draw" && this.draft.length > 0) {
       const tip = this.hover?.point ?? null;
       const last = this.draft[this.draft.length - 1];
@@ -722,6 +875,47 @@ export class Stage {
     }
     return parts.join("");
   }
+
+  /** Auswahlrahmen, Griffe und Maß des gewählten Aufbaus, dazu die Vorschau beim Aufziehen. Gilt in beiden Ansichten. */
+  private editMarkup(spatial: boolean): string[] {
+    const parts: string[] = [];
+    const shown = (points: XY[], frame: FaceFrame) => points.map((point) => this.at(point, frame));
+    const text = (points: { x: number; y: number }[]) => points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+    const below = (points: { x: number; y: number }[], value: string) =>
+      label(points.reduce((sum, p) => sum + p.x, 0) / points.length, Math.max(...points.map((p) => p.y)) + 20, value);
+
+    const drag = this.press?.drag;
+    if (drag?.kind === "place" && drag.shape) {
+      const building = this.buildings.find((entry) => entry.id === drag.id);
+      const frame = building ? this.frameOf(building, drag.edge) : null;
+      if (frame) {
+        const ring = shown(obstacleRing(frame, { id: "", kind: drag.tool, heightM: 0, marginM: 0, ...drag.shape }), frame);
+        parts.push(`<polygon class="r3d-obstacle is-${drag.tool} is-preview" points="${text(ring)}"/>`, below(ring, sizeText(drag.shape)));
+      }
+    }
+
+    const building = this.selected();
+    const edge = this.selection.edge;
+    if (this.step !== "gebaeude" || !building || edge == null || !this.selection.obstacle) return parts;
+    const obstacle = building.plans?.[edge]?.obstacles.find((entry) => entry.id === this.selection.obstacle);
+    const frame = this.frameOf(building, edge);
+    if (!obstacle || !frame || !this.facing(frame)) return parts;
+    const ring = shown(obstacleRing(frame, obstacle), frame);
+    if (!ring.every((corner) => corner.visible)) return parts;
+    /* In der Draufsicht ist der Aufbau schon als Fläche gezeichnet, räumlich steht er als Körper da. */
+    if (spatial) parts.push(`<polygon class="r3d-obstacle-ring" points="${text(ring)}"/>`);
+    if (this.tool === "select") {
+      for (const entry of this.gripsOf(frame, obstacle).grips) {
+        parts.push(`<rect class="r3d-grip" data-grip="${entry.grip.da},${entry.grip.ds}" x="${(entry.at.x - 4.5).toFixed(1)}" y="${(entry.at.y - 4.5).toFixed(1)}" width="9" height="9" rx="2"/>`);
+      }
+    }
+    if (!obstacle.shape) parts.push(below(ring, sizeText(obstacle)));
+    return parts;
+  }
+}
+
+function sizeText(shape: { widthM: number; lengthM: number }): string {
+  return `${formatMeters(shape.widthM)} × ${formatMeters(shape.lengthM)}`;
 }
 
 function label(x: number, y: number, text: string): string {

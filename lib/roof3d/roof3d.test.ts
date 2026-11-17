@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { polygonArea, type XY } from "@/lib/roof/geo";
 import { buildRoof, gableEaves, isConvex, newBuilding, offsetConvex, windName, type BuildingSpec } from "@/lib/roof3d/building";
-import { CONTROL_DEFAULTS, DEG, cameraPosition, groundPoint, orbit, panBy, pointerMode, projectPoint, wheelNotches, zoomBy, zoomFactor, type View } from "@/lib/roof3d/camera";
+import { CONTROL_DEFAULTS, DEG, cameraPosition, groundPoint, orbit, panBy, pointerMode, projectPoint, viewRay, wheelNotches, zoomBy, zoomFactor, type View } from "@/lib/roof3d/camera";
 import { pushEdge, snapDraft } from "@/lib/roof3d/draw";
 
 /** 12 m in Ost-West, 8 m in Nord-Süd, Mitte im Ursprung. Kante 0 ist die Südseite. */
@@ -280,7 +280,7 @@ describe("Luftbild", () => {
 import { pointInPolygon } from "@/lib/roof/geo";
 import { centroidLngLat, moduleCornersAt, toLngLat } from "@/lib/roof/geo";
 import { buildScene } from "@/lib/roof/scene";
-import { cellAt, emptyPlan, faceFrame, heightOnFace, layoutFace, moveObstacle, newObstacle, obstacleRing, planTotals, setCells, syncPlans, updatePlan, withOutline } from "@/lib/roof3d/plans";
+import { GRIPS, cellAt, emptyPlan, faceFrame, gripPoints, heightOnFace, layoutFace, moveObstacle, newObstacle, obstacleRing, planTotals, rayOnFace, resizeObstacle, setCells, spanObstacle, syncPlans, updatePlan, withOutline } from "@/lib/roof3d/plans";
 
 describe("Aufbauten und Modulraster", () => {
   const placement = { catalogItemId: "k1", powerWp: 450, widthM: 1.134, heightM: 1.762, portrait: true, setbackM: 0.3, gapM: 0.02 };
@@ -443,6 +443,68 @@ describe("Aufbauten und Modulraster", () => {
     const norths = scene.modules.map((triangles) => triangles[2]);
     expect(norths.filter((value) => value < 0)).toHaveLength(18);
     expect(norths.filter((value) => value > 0)).toHaveLength(18);
+  });
+
+  it("räumliche Ansicht: der Blick trifft die Dachseite an der Stelle, die dort gezeichnet ist", () => {
+    const north = buildRoof(house).faces[1];
+    const back = faceFrame(house, north);
+    const aspect = 1.6;
+    for (const look of [view, { ...view, heading: 40 * DEG, tilt: 65 * DEG, dist: 25 }, { ...view, heading: -110 * DEG, tilt: 30 * DEG }]) {
+      for (const point of [[-3, -2], [4.5, -3.6], [0, -0.4]] as XY[]) {
+        const shown = projectPoint(look, point, heightOnFace(frame, point), aspect);
+        const ray = viewRay(look, shown.x, shown.y, aspect);
+        const found = rayOnFace(frame, ray.origin, ray.dir);
+        expect(found).not.toBeNull();
+        expect(found![0]).toBeCloseTo(point[0], 5);
+        expect(found![1]).toBeCloseTo(point[1], 5);
+      }
+    }
+    /* Von Süden gesehen liegt die Nordseite hinter dem First: Ihre Ebene wird von unten getroffen und zählt nicht. */
+    const low = { ...view, tilt: 80 * DEG };
+    const hidden = projectPoint(low, [0, 2], heightOnFace(back, [0, 2]), aspect);
+    const through = viewRay(low, hidden.x, hidden.y, aspect);
+    expect(rayOnFace(back, through.origin, through.dir)).toBeNull();
+    /* Der Bodenpunkt bleibt, was er war. */
+    expect(groundPoint(view, 0, 0, aspect)![0]).toBeCloseTo(0, 6);
+  });
+
+  it("Aufbau an den Griffen ziehen: die gegenüberliegende Seite bleibt stehen, Maße rasten auf 5 cm", () => {
+    const window = { ...newObstacle("f", "fenster", [1, -2]), widthM: 1, lengthM: 1.2 };
+    const grips = gripPoints(frame, window);
+    expect(grips.map((entry) => entry.grip)).toEqual(GRIPS);
+    const ring = obstacleRing(frame, window);
+    expect(grips[0].point[0]).toBeCloseTo(ring[0][0], 9);
+    expect(grips[4].point[1]).toBeCloseTo(ring[2][1], 9);
+    /* Rechte Kante 0,63 m nach Osten: Breite 1,65 (gerastet), linke Kante bleibt bei 0,5. */
+    const wider = resizeObstacle(frame, window, { da: 1, ds: 0 }, [2.13, -2]);
+    expect([wider.widthM, wider.lengthM]).toEqual([1.65, 1.2]);
+    expect(wider.center[0] - wider.widthM / 2).toBeCloseTo(0.5, 9);
+    expect(wider.center[1]).toBeCloseTo(-2, 9);
+    /* Obere Kante dachaufwärts: 1 m im Grundriss sind bei 30° 1,155 m auf dem Dach. Die untere Kante bleibt. */
+    const bottom = obstacleRing(frame, window)[0][1];
+    const longer = resizeObstacle(frame, window, { da: 0, ds: 1 }, [1, bottom + 2 * Math.cos(30 * DEG)], 0);
+    expect(longer.lengthM).toBeCloseTo(2, 2);
+    expect(obstacleRing(frame, { ...window, ...longer })[0][1]).toBeCloseTo(bottom, 6);
+    /* Ecke: beides zugleich. Über die Gegenseite hinaus gezogen bleibt das Mindestmaß. */
+    const corner = resizeObstacle(frame, window, { da: -1, ds: -1 }, [0, -3]);
+    expect(corner.widthM).toBe(1.5);
+    expect(corner.lengthM).toBeGreaterThan(1.2);
+    expect(resizeObstacle(frame, window, { da: 1, ds: 0 }, [-5, -2]).widthM).toBe(0.1);
+    /* Freie Formen aus der alten Dachplanung haben keine Griffe. */
+    expect(gripPoints(frame, { ...window, shape: [[-1, -1], [1, -1], [0, 1]] })).toEqual([]);
+  });
+
+  it("Aufbau aufziehen: Rechteck zwischen Druckpunkt und Mauszeiger, in jede Richtung", () => {
+    const drawn = spanObstacle(frame, [0, -3], [2, -3 + 1.5 * Math.cos(30 * DEG)]);
+    expect([drawn.widthM, drawn.lengthM]).toEqual([2, 1.5]);
+    expect(drawn.center[0]).toBeCloseTo(1, 9);
+    const ring = obstacleRing(frame, { ...newObstacle("s", "sperrzone", drawn.center), ...drawn });
+    expect(ring[0][0]).toBeCloseTo(0, 9);
+    expect(ring[0][1]).toBeCloseTo(-3, 9);
+    const back = spanObstacle(frame, [0, -3], [-0.72, -3.4]);
+    expect(back.widthM).toBe(0.7);
+    expect(back.center[0]).toBeCloseTo(-0.35, 9);
+    expect(back.center[1]).toBeLessThan(-3);
   });
 
   it("behält die freie Form eines Hindernisses aus der alten Dachplanung", () => {

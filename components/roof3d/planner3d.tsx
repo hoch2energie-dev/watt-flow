@@ -190,9 +190,9 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
         if (done) handlers.current.commit(next);
         else setLive(next);
       },
-      onPlaceObstacle: (id, edge, kind, center) => {
+      onPlaceObstacle: (id, edge, kind, center, size) => {
         if (handlers.current.locked) return;
-        const added = newObstacle(newId(), kind, center);
+        const added = { ...newObstacle(newId(), kind, center), ...size };
         handlers.current.commit(apply(handlers.current.present, id, (building) => updatePlan(building, edge, (current) => ({ ...current, obstacles: [...current.obstacles, added] }))));
         setSelection({ id, edge, obstacle: added.id });
         setTool("select");
@@ -207,6 +207,14 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
           return result.spec;
         });
         setSelection({ id, edge: landed, obstacle: moved });
+        if (done) handlers.current.commit(next);
+        else setLive(next);
+      },
+      onResizeObstacle: (id, edge, resized, shape, done) => {
+        if (handlers.current.locked) return;
+        const next = apply(handlers.current.present, id, (building) =>
+          updatePlan(building, edge, (current) => ({ ...current, obstacles: current.obstacles.map((entry) => (entry.id === resized ? { ...entry, ...shape } : entry)) })),
+        );
         if (done) handlers.current.commit(next);
         else setLive(next);
       },
@@ -256,7 +264,8 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
   const chooseTool = useCallback(
     (next: Tool) => {
       if (next !== "select" && locked) return;
-      if (next !== "select") setFlat(true);
+      /* Der Umriss wird auf dem Luftbild gezeichnet, also in der Draufsicht. Alles andere geht in beiden Ansichten. */
+      if (next === "draw") setFlat(true);
       setTool(next);
     },
     [locked],
@@ -266,7 +275,6 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
       setStep(next);
       setTool("select");
       if (next === "gebaeude") return setSelection((current) => ({ id: current.id, edge: null, obstacle: null }));
-      setFlat(true);
       const building = history.present.find((entry) => entry.id === selection.id) ?? history.present[0];
       setSelection(building ? { id: building.id, edge: sunniestEdge(building), obstacle: null } : NO_SELECTION);
     },
@@ -301,7 +309,7 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
       else if (key === "d" && step === "gebaeude") chooseTool("draw");
       else if (key === "2") setFlat(true);
       else if (key === "3") {
-        setTool("select");
+        if (tool === "draw") setTool("select");
         setFlat(false);
       }
     };
@@ -317,18 +325,20 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
           ? "Nächste Ecke anklicken. Rechte Winkel rasten ein, Umschalt löst das Raster."
           : "Weitere Ecke anklicken oder auf den ersten Punkt klicken, um das Dach zu schließen."
       : tool !== "select"
-        ? `${OBSTACLE_DEFAULTS[tool].label}: auf die Stelle im Dach klicken. Maße danach rechts eintragen.`
+        ? `${OBSTACLE_DEFAULTS[tool].label}: auf die Stelle im Dach klicken oder mit gedrückter Maustaste aufziehen.`
         : step === "module"
           ? buildings.length === 0
             ? "Zuerst im Schritt Gebäude ein Dach zeichnen."
             : !plan?.placement
-              ? "Dachfläche anklicken und rechts ein Modul wählen."
+              ? "Dachseite anklicken und rechts ein Modul wählen."
+              : "Plätze anklicken oder mit gedrückter Maustaste überstreichen. Ein Klick auf ein Modul nimmt es wieder heraus."
+          : locked || !selected
+            ? null
+            : obstacle
+              ? "Aufbau ziehen, um ihn zu verschieben. An den Griffen ziehen, um ihn breiter oder länger zu machen."
               : flat
-                ? "Plätze anklicken oder mit gedrückter Maustaste überstreichen. Ein Klick auf ein Modul nimmt es wieder heraus."
-                : "Belegt wird in der Draufsicht (2D). Die räumliche Ansicht zeigt das Ergebnis."
-          : flat && selected && !obstacle && !locked
-            ? "Punkt in der Kantenmitte ziehen, um die Seite zu verschieben. Im Dach ziehen, um das ganze Gebäude zu bewegen."
-            : null;
+                ? "Punkt in der Kantenmitte ziehen, um die Seite zu verschieben. Im Dach ziehen, um das ganze Gebäude zu bewegen."
+                : "Umriss und Lage des Gebäudes lassen sich in der Draufsicht (2D) ändern. Aufbauten und Module gehen in beiden Ansichten.";
 
   return (
     <div className="r3d">
@@ -438,7 +448,7 @@ export function Planner3D({ title, subtitle, initial, ground, modules = NO_MODUL
         </button>
         <div className="r3d-toggle" role="group" aria-label="Ansicht">
           <button type="button" className={flat ? "is-on" : ""} onClick={() => setFlat(true)} title="Draufsicht (2)">2D</button>
-          <button type="button" className={flat ? "" : "is-on"} onClick={() => { setTool("select"); setFlat(false); }} title="Räumliche Ansicht (3)">3D</button>
+          <button type="button" className={flat ? "" : "is-on"} onClick={() => { if (tool === "draw") setTool("select"); setFlat(false); }} title="Räumliche Ansicht (3)">3D</button>
         </div>
         <button type="button" className="r3d-icon" onClick={() => stageRef.current?.frameAll()} title="Alle Gebäude ins Bild" aria-label="Alle Gebäude ins Bild">
           <Scan size={18} />
@@ -566,7 +576,7 @@ function ObstaclePanel({ obstacle, locked, onChange, onRemove }: { obstacle: Obs
       )}
       {obstacle.kind === "kamin" ? <NumberRow id="r3d-ob-height" label="Höhe" unit="m" value={obstacle.heightM} step={0.1} limits={[0.1, 10]} disabled={locked} onChange={(value) => onChange({ heightM: value }, "h")} /> : null}
       {free ? null : <NumberRow id="r3d-ob-margin" label="Abstand der Module" unit="cm" value={obstacle.marginM * 100} step={5} limits={[0, 200]} disabled={locked} onChange={(value) => onChange({ marginM: value / 100 }, "m")} />}
-      <p className="r3d-note">In der Draufsicht ziehen, um den Aufbau zu verschieben.</p>
+      <p className="r3d-note">{free ? "Ziehen verschiebt den Aufbau." : "Ziehen verschiebt den Aufbau. An den Griffen ändert sich die Größe, mit Umschalt ohne 5-cm-Raster."}</p>
       <button type="button" className="r3d-button is-danger" disabled={locked} onClick={onRemove}>
         <Trash2 size={15} /> {OBSTACLE_DEFAULTS[obstacle.kind].label} löschen
       </button>
