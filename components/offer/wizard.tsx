@@ -8,6 +8,7 @@ import { locateAddress } from "@/app/actions/roof";
 import { Field, NumberField, SelectInput, TextArea, TextInput } from "@/components/fields";
 import { PlanningHub } from "@/components/offer/hub";
 import { LineEditor } from "@/components/offer/line-editor";
+import { LocationDialog } from "@/components/offer/location-dialog";
 import { ResultsView } from "@/components/offer/results";
 import { TenantPowerDialog, type TenantDialogTab } from "@/components/offer/tenant-power";
 import { FigureStrip, OfferTabs } from "@/components/offer/tabs";
@@ -35,6 +36,8 @@ type Meta = {
   isAdmin: boolean;
   stages: { id: string; name: string }[];
   defaults: VariantDefaults;
+  /** Browser-Schlüssel für Googles Karte. Ohne ihn gibt es den Knopf „Auf der Karte prüfen" nicht. */
+  mapsKey: string | null;
 };
 
 /**
@@ -59,6 +62,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
   const [deleteArmed, setDeleteArmed] = useState(false);
   /* Dialog „Mieterstrom": geschlossen oder offen mit dem Reiter, der zuerst gezeigt wird. */
   const [tenantTab, setTenantTab] = useState<TenantDialogTab | null>(null);
+  const [mapOpen, setMapOpen] = useState(false);
   const actions = useRef<HTMLDetailsElement>(null);
   const variant = offer.variants.find((entry) => entry.id === variantId) ?? offer.variants[0];
 
@@ -126,6 +130,14 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
     setLocating(false);
     if (!found.ok) return setLocateNote(found.notice);
     patchOffer({ latitude: found.latitude, longitude: found.longitude, locationLabel: found.label, locationSource: "adresse" });
+    if (found.approximate) setLocateNote(`Die Adresse wurde nur ungefähr gefunden, nicht das Gebäude selbst. Bitte den Standort ${meta.mapsKey ? "auf der Karte" : "in der 3D-Planung"} prüfen.`);
+  }
+  /** Übernimmt den Punkt unter dem Fadenkreuz der Karte als Standort des Angebots. */
+  function pickLocation(latitude: number, longitude: number) {
+    const round = (value: number) => Math.round(value * 1e6) / 1e6;
+    patchOffer({ latitude: round(latitude), longitude: round(longitude), locationSource: "karte", locationLabel: offer.locationLabel || meta.siteAddress || "Auf der Karte gesetzt" });
+    setLocateNote(null);
+    setMapOpen(false);
   }
   function addVariant(copy: boolean) {
     const created = blankVariant(copy ? `${variant.name} Kopie` : `Variante ${offer.variants.length + 1}`, offer.variants.length, meta.defaults);
@@ -243,10 +255,11 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
             </dl>
             <p className="mt-2 text-xs text-muted">Der Standort bestimmt das Luftbild der 3D-Planung und die Ertragsrechnung. Die Adresse selbst steht in der Anfrage.</p>
             {locateNote ? <div className="mt-2"><Notice>{locateNote}</Notice></div> : null}
-            <div className="mt-3">
+            <div className="mt-3 flex flex-wrap gap-2">
               <Button type="button" size="sm" variant="secondary" disabled={meta.locked || locating || !meta.siteAddress} onClick={() => void locate()}>
                 {locating ? "Sucht…" : located ? "Standort neu aus der Adresse suchen" : "Standort aus der Adresse suchen"}
               </Button>
+              {meta.mapsKey ? <Button type="button" size="sm" variant="secondary" onClick={() => setMapOpen(true)}>Auf der Karte prüfen</Button> : null}
             </div>
           </Card>
           <fieldset disabled={meta.locked} className="rounded-2xl border border-line bg-elevated p-4 disabled:opacity-80 sm:p-5 lg:col-span-2">
@@ -468,6 +481,10 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
             </form>
           ) : null}
         </div>
+      ) : null}
+
+      {mapOpen && meta.mapsKey ? (
+        <LocationDialog apiKey={meta.mapsKey} latitude={located ? offer.latitude : null} longitude={located ? offer.longitude : null} locked={meta.locked} onPick={pickLocation} onClose={() => setMapOpen(false)} />
       ) : null}
 
       {tenantTab ? (

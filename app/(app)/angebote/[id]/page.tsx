@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { toCatalogOption, toOfferDTO } from "@/lib/dto";
 import { addressLine, customerName } from "@/lib/format";
+import { googleBrowserKey } from "@/lib/google/config";
 import { ensureSettings, variantDefaultsFromSettings } from "@/lib/settings";
 
 export const metadata = { title: "Angebot" };
@@ -41,6 +42,7 @@ export default async function OfferPage({ params }: { params: Promise<{ id: stri
         isAdmin: user.role === "ADMIN",
         stages: stages.map((stage) => ({ id: stage.id, name: stage.name })),
         defaults: variantDefaultsFromSettings(settings),
+        mapsKey: googleBrowserKey(),
       }}
     />
   );

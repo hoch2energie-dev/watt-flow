@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { saveCustomer } from "@/app/actions/crm";
+import { AddressFields } from "@/components/address-fields";
 import { Button, Notice, Panel } from "@/components/ui";
 
 type CustomerValues = {
@@ -45,9 +46,7 @@ export function CustomerForm({ customer }: { customer?: CustomerValues }) {
           <label className="text-sm font-semibold">Nachname<input name="lastName" required defaultValue={customer?.lastName} className="field mt-1" /></label>
           <label className="text-sm font-semibold">E-Mail<input name="email" type="email" defaultValue={customer?.email} className="field mt-1" /></label>
           <label className="text-sm font-semibold">Telefon<input name="phone" defaultValue={customer?.phone} className="field mt-1" /></label>
-          <label className="text-sm font-semibold sm:col-span-2">Straße<input name="street" defaultValue={customer?.street} className="field mt-1" /></label>
-          <label className="text-sm font-semibold">PLZ<input name="zip" defaultValue={customer?.zip} className="field mt-1" /></label>
-          <label className="text-sm font-semibold">Ort<input name="city" defaultValue={customer?.city} className="field mt-1" /></label>
+          <AddressFields key={customer?.id ?? "neu"} names={{ street: "street", zip: "zip", city: "city" }} defaults={customer} />
           <label className="text-sm font-semibold sm:col-span-2">Interne Notiz<textarea name="notes" defaultValue={customer?.notes} className="field mt-1 min-h-24" /></label>
         </div>
         {error ? <div className="mt-3"><Notice tone="danger">{error}</Notice></div> : null}

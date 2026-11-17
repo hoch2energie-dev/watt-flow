@@ -5,6 +5,9 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { parsePdfPages, type PdfPageSetting } from "@/lib/content";
 import { prisma } from "@/lib/db";
+import { googleBrowserKey, googleServerKey } from "@/lib/google/config";
+import { explainGoogleError } from "@/lib/google/errors";
+import { geocodeWithGoogle, suggestAddresses } from "@/lib/google/service";
 import { formBool, formNumber, formString } from "@/app/actions/helpers";
 import { Prisma } from "@prisma/client";
 
@@ -163,4 +166,36 @@ export async function updateUser(form: FormData) {
   });
   revalidatePath("/einstellungen");
   return { ok: true as const };
+}
+
+export type GoogleCheck = { name: string; ok: boolean; detail: string; hint: string };
+
+/**
+ * Verbindungsprüfung für die Einstellungen: stellt je eine echte Anfrage an die Adressvorschläge
+ * und an die Standortsuche und gibt Googles Antwort samt Hinweis zurück. Die Schlüssel selbst
+ * verlassen den Server dabei nicht.
+ */
+export async function checkGoogleMaps() {
+  if (!(await admin())) return { ok: false as const, error: "Nur die Administration prüft die Anbindung." };
+  const key = googleServerKey();
+  if (!key) return { ok: true as const, checks: [] as GoogleCheck[], location: null, browserKey: googleBrowserKey() };
+  const settings = await prisma.companySettings.findUnique({ where: { id: "default" } });
+  const own = [settings?.street, [settings?.zip, settings?.city].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  const address = own.length >= 8 ? own : "Platz der Republik 1, 11011 Berlin";
+  const [suggest, geocode] = await Promise.all([suggestAddresses(key, address, crypto.randomUUID()), geocodeWithGoogle(key, address)]);
+  const checks: GoogleCheck[] = [
+    {
+      name: "Adressvorschläge (Places API (New))",
+      ok: suggest.ok,
+      detail: suggest.ok ? `Google antwortet. ${suggest.suggestions.length} Vorschläge für „${address}“.` : suggest.error,
+      hint: suggest.ok ? "" : explainGoogleError(suggest.error),
+    },
+    {
+      name: "Standortsuche (Geocoding API)",
+      ok: geocode.ok,
+      detail: geocode.ok ? (geocode.hit ? `Google antwortet. „${address}“ ${geocode.hit.approximate ? "ungefähr" : "am Gebäude"} gefunden.` : `Google antwortet, hat „${address}“ aber nicht gefunden.`) : geocode.error,
+      hint: geocode.ok ? "" : explainGoogleError(geocode.error),
+    },
+  ];
+  return { ok: true as const, checks, location: geocode.ok && geocode.hit ? { latitude: geocode.hit.latitude, longitude: geocode.hit.longitude } : null, browserKey: googleBrowserKey() };
 }

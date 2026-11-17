@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createRequest } from "@/app/actions/crm";
+import { AddressFields } from "@/components/address-fields";
 import { REQUEST_SOURCES } from "@/lib/content";
 import { Button, Notice, Panel } from "@/components/ui";
 
@@ -64,18 +65,14 @@ export function RequestForm({ customers, staff }: { customers: { id: string; lab
             <label className="text-sm font-semibold">Nachname<input name="lastName" required className="field mt-1" /></label>
             <label className="text-sm font-semibold">E-Mail<input name="email" type="email" className="field mt-1" /></label>
             <label className="text-sm font-semibold">Telefon<input name="phone" className="field mt-1" /></label>
-            <label className="text-sm font-semibold sm:col-span-2">Straße<input name="street" className="field mt-1" /></label>
-            <label className="text-sm font-semibold">PLZ<input name="zip" className="field mt-1" /></label>
-            <label className="text-sm font-semibold">Ort<input name="city" className="field mt-1" /></label>
+            <AddressFields names={{ street: "street", zip: "zip", city: "city" }} />
           </div>
         )}
         <label className="mt-4 flex items-center gap-2 text-sm">
           <input type="checkbox" name="sameAddress" defaultChecked /> Objektadresse ist die Kontaktadresse
         </label>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <label className="text-sm font-semibold sm:col-span-2">Abweichende Straße<input name="siteStreet" className="field mt-1" /></label>
-          <label className="text-sm font-semibold">PLZ<input name="siteZip" className="field mt-1" /></label>
-          <label className="text-sm font-semibold">Ort<input name="siteCity" className="field mt-1" /></label>
+          <AddressFields names={{ street: "siteStreet", zip: "siteZip", city: "siteCity" }} streetLabel="Abweichende Straße" />
         </div>
       </Panel>
     </form>

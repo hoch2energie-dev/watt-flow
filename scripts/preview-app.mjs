@@ -18,6 +18,8 @@ const replaced = {
   "@/app/actions/yield": stub("actions-yield.ts"),
   "@/app/actions/roof": stub("actions-roof.ts"),
   "@/lib/navigate": stub("navigate.ts"),
+  "@/app/actions/crm": stub("actions-crm.ts"),
+  "@/lib/address-client": stub("address-client.ts"),
 };
 
 await mkdir(out, { recursive: true });
@@ -36,7 +38,7 @@ await build({
     {
       name: "stellvertreter",
       setup(api) {
-        api.onResolve({ filter: /^(next\/(link|navigation)|@\/app\/actions\/(offers|yield|roof)|@\/lib\/navigate)$/ }, (args) => ({ path: replaced[args.path] }));
+        api.onResolve({ filter: /^(next\/(link|navigation)|@\/app\/actions\/(offers|yield|roof|crm)|@\/lib\/(navigate|address-client))$/ }, (args) => ({ path: replaced[args.path] }));
       },
     },
   ],

@@ -137,4 +137,5 @@ export const demoMeta = {
     { id: "s3", name: "Warten auf Rückmeldung" },
   ],
   defaults: demoDefaults,
+  mapsKey: null as string | null,
 };

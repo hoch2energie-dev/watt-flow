@@ -65,6 +65,8 @@ Luftbilder und Gebäudemodelle, ohne API-Schlüssel:
 
 Die ausgehenden Adressen stehen in [DEPLOY.md](DEPLOY.md).
 
+Mit Schlüsseln der Google Maps Platform kommen Adressvorschläge beim Tippen, eine genauere Standortsuche und eine Satellitenkarte zum Prüfen des Standorts dazu. Das Luftbild der Planung bleibt dabei, wie oben beschrieben. Einrichtung, Kosten und Nutzungsregeln: [docs/google-maps.md](docs/google-maps.md).
+
 ## Bewusst nicht enthalten
 
 - Lastprofile und Stundenverbrauchsrechnung

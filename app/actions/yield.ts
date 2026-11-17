@@ -3,10 +3,10 @@
 import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
+import { findLocation } from "@/lib/locate";
 import { prisma } from "@/lib/db";
 import { fetchPvgisPlane, pvgisCacheKey, type PlaneRequest } from "@/lib/pvgis/client";
 import { sumFaceYields, yieldRequestKey } from "@/lib/pvgis/faces";
-import { geocodeAddress } from "@/lib/pvgis/geocode";
 import { normalizeMounting, type RoofFaceInput } from "@/lib/pvgis/types";
 
 export type YieldComputation = {
@@ -56,27 +56,10 @@ async function resolveLocation(address: string, latitude: number | null, longitu
   if (latitude != null && longitude != null && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180) {
     return { latitude, longitude, label: "", source: "manuell" as const };
   }
-  const query = address.trim().toLowerCase();
-  if (!query) throw new Error("Für PVGIS fehlt der Standort. Tragen Sie Breite und Länge ein oder hinterlegen Sie die Objektadresse.");
-  const cached = await prisma.geocodeCache.findUnique({ where: { query } });
-  if (cached?.found && cached.latitude != null && cached.longitude != null) {
-    return { latitude: Number(cached.latitude), longitude: Number(cached.longitude), label: cached.label, source: "nominatim" as const };
-  }
-  if (cached && !cached.found) throw new Error("Die Adresse wurde nicht gefunden. Bitte Breite und Länge von Hand eintragen.");
-  const hit = await geocodeAddress(address);
-  await prisma.geocodeCache.upsert({
-    where: { query },
-    create: {
-      query,
-      found: Boolean(hit),
-      latitude: hit?.latitude,
-      longitude: hit?.longitude,
-      label: hit?.label ?? "",
-    },
-    update: {},
-  });
+  if (!address.trim()) throw new Error("Für PVGIS fehlt der Standort. Tragen Sie Breite und Länge ein oder hinterlegen Sie die Objektadresse.");
+  const hit = await findLocation(address);
   if (!hit) throw new Error("Die Adresse wurde nicht gefunden. Bitte Breite und Länge von Hand eintragen.");
-  return { latitude: hit.latitude, longitude: hit.longitude, label: hit.label, source: "nominatim" as const };
+  return { latitude: hit.latitude, longitude: hit.longitude, label: hit.label, source: hit.source };
 }
 
 export async function calculatePvgis(input: {

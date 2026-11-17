@@ -1,23 +1,32 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { CustomerForm } from "@/components/customer-form";
 import { OfferWizard } from "@/components/offer/wizard";
 import { OfferPlanner3D } from "@/components/roof3d/offer-planner";
 import { Shell } from "@/components/shell";
+import { Notice, PageHeader } from "@/components/ui";
 import { demoCatalog, demoMeta } from "../demo-data";
 import { demoGround } from "../roof3d/demo-ground";
 import { db, listeners, route, toast } from "./stubs/db";
 
-/** Vorschau ohne Server: Angebotsseite und 3D-Planung mit einem Beispielangebot, das im Speicher liegt. */
+/**
+ * Vorschau ohne Server: Angebotsseite und 3D-Planung mit einem Beispielangebot, das im Speicher liegt,
+ * dazu das Formular „Kontakt anlegen" mit Adressvorschlägen aus erfundenen Anschriften.
+ */
+type Page = "angebot" | "planung" | "kontakt";
+const pageOf = (hash: string): Page => (hash === "#planung" ? "planung" : hash === "#kontakt" ? "kontakt" : "angebot");
+const user = { name: "Rudolf Gress", email: "", role: "ADMIN" as const };
+
 const ground = { kind: "canvas" as const, paint: demoGround, sizeM: 160, credit: "Beispielbild, kein echtes Luftbild" };
 
 function App() {
-  const [page, setPage] = useState(window.location.hash === "#planung" ? "planung" : "angebot");
+  const [page, setPage] = useState<Page>(pageOf(window.location.hash));
   const [visit, setVisit] = useState(0);
   const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
     const onHash = () => {
-      setPage(window.location.hash === "#planung" ? "planung" : "angebot");
+      setPage(pageOf(window.location.hash));
       setVisit((value) => value + 1);
     };
     const onClick = (event: MouseEvent) => {
@@ -53,8 +62,14 @@ function App() {
     <>
       {page === "planung" ? (
         <OfferPlanner3D key={`p${visit}`} initial={db.offer} catalog={demoCatalog} variantId={db.offer.variants[0].id} siteAddress={demoMeta.siteAddress} customerName={demoMeta.customerName} locked={false} groundOverride={ground} />
+      ) : page === "kontakt" ? (
+        <Shell user={user} company="Vorschau mit Beispieldaten" mustChangePassword={false} demoSecret={false}>
+          <PageHeader eyebrow="Kunden" title="Kontakt anlegen" description="Beim Tippen in „Straße“ erscheinen Adressvorschläge. Ein Vorschlag füllt Straße, PLZ und Ort." />
+          <div className="mb-4 max-w-3xl"><Notice>Die Vorschau fragt nicht bei Google an. Sie kennt nur ein paar erfundene Anschriften, zum Beispiel „Musterweg“, „Beispielallee“ oder „Testring“.</Notice></div>
+          <div className="max-w-3xl"><CustomerForm key={`k${visit}`} /></div>
+        </Shell>
       ) : (
-        <Shell user={{ name: "Rudolf Gress", email: "", role: "ADMIN" }} company="Vorschau mit Beispieldaten" mustChangePassword={false} demoSecret={false}>
+        <Shell user={user} company="Vorschau mit Beispieldaten" mustChangePassword={false} demoSecret={false}>
           <OfferWizard key={`a${visit}`} initial={db.offer} catalog={demoCatalog} meta={demoMeta} />
         </Shell>
       )}

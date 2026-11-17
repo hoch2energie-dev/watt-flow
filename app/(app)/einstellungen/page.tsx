@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { parsePdfPages } from "@/lib/content";
 import { prisma } from "@/lib/db";
 import { formatNumber } from "@/lib/format";
+import { googleBrowserKey, googleServerKey } from "@/lib/google/config";
 import { ensureSettings } from "@/lib/settings";
 
 export const metadata = { title: "Einstellungen" };
@@ -22,6 +23,7 @@ export default async function SettingsPage() {
       <SettingsScreen
         isAdmin={user.role === "ADMIN"}
         logo={Boolean(settings.logoStoredName)}
+        google={user.role === "ADMIN" ? { server: Boolean(googleServerKey()), browser: Boolean(googleBrowserKey()) } : { server: false, browser: false }}
         company={{
           companyName: settings.companyName,
           street: settings.street,

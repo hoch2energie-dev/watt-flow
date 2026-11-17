@@ -167,7 +167,7 @@ function Locate({ address, backHref, locked, onFound }: { address: string; backH
             setError(null);
             const result = await locateAddress(text);
             setBusy(false);
-            if (result.ok) onFound({ latitude: result.latitude, longitude: result.longitude, label: result.label, source: "nominatim" });
+            if (result.ok) onFound({ latitude: result.latitude, longitude: result.longitude, label: result.label, source: result.source });
             else setError(result.notice);
           }}
         >

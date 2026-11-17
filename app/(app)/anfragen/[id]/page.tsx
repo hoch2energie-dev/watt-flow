@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { addNote, deleteRequest, updateRequest } from "@/app/actions/crm";
 import { createOffer } from "@/app/actions/offers";
 import { staffOptions } from "@/app/actions/helpers";
+import { AddressFields } from "@/components/address-fields";
 import { ChecklistEditor } from "@/components/checklist";
 import { Badge, Button, PageHeader, Panel } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
@@ -112,11 +113,7 @@ export default async function RequestDetail({ params }: { params: Promise<{ id: 
                   {staff.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
                 </select>
               </label>
-              <label className="block text-sm font-semibold">Objektstraße<input name="street" defaultValue={request.street ?? ""} className="field mt-1" /></label>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="text-sm font-semibold">PLZ<input name="zip" defaultValue={request.zip ?? ""} className="field mt-1" /></label>
-                <label className="text-sm font-semibold">Ort<input name="city" defaultValue={request.city ?? ""} className="field mt-1" /></label>
-              </div>
+              <AddressFields layout="stack" streetLabel="Objektstraße" names={{ street: "street", zip: "zip", city: "city" }} defaults={{ street: request.street, zip: request.zip, city: request.city }} />
               <Button type="submit" size="sm">Speichern</Button>
             </form>
           </Panel>

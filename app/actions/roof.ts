@@ -3,7 +3,7 @@
 import { Prisma } from "@prisma/client";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { geocodeAddress } from "@/lib/pvgis/geocode";
+import { findLocation } from "@/lib/locate";
 import { horizonUrl, parseHorizon } from "@/lib/roof/horizon";
 import { roofsFromCityJson } from "@/lib/roof/lod2";
 import { inNrw, lod2ItemsUrl } from "@/lib/roof/sources";
@@ -13,28 +13,22 @@ import { DEFAULT_SYSTEM_LOSSES, type RoofFaceInput } from "@/lib/pvgis/types";
 
 const USER_AGENT = "Hoch2Angebote/1.0 (https://angebote.hoch2energie.de)";
 
-export async function locateAddress(address: string) {
+type Located = { ok: true; latitude: number; longitude: number; label: string; source: "google" | "nominatim"; approximate: boolean } | { ok: false; notice: string };
+
+/**
+ * Sucht die Koordinaten zu einer Anschrift. Ist Google eingerichtet, fragt der Server dort an
+ * (trifft in der Regel das Gebäude) und übernimmt nur Breite und Länge. Ohne Google, oder wenn
+ * Google ausfällt, sucht OpenStreetMap.
+ */
+export async function locateAddress(address: string): Promise<Located> {
   await requireUser();
-  const query = address.trim().toLowerCase();
-  if (query.length < 3) return { ok: false as const, notice: "Bitte eine vollständigere Adresse eingeben." };
+  if (address.trim().length < 3) return { ok: false, notice: "Bitte eine vollständigere Adresse eingeben." };
   try {
-    const cached = await prisma.geocodeCache.findUnique({ where: { query } });
-    if (cached?.found && cached.latitude != null && cached.longitude != null) {
-      return { ok: true as const, latitude: Number(cached.latitude), longitude: Number(cached.longitude), label: cached.label };
-    }
-    if (cached && !cached.found) {
-      return { ok: false as const, notice: "Die Adresse wurde nicht gefunden. Bitte Breite und Länge eintragen." };
-    }
-    const hit = await geocodeAddress(address);
-    await prisma.geocodeCache.upsert({
-      where: { query },
-      create: { query, found: Boolean(hit), latitude: hit?.latitude, longitude: hit?.longitude, label: hit?.label ?? "" },
-      update: {},
-    });
-    if (!hit) return { ok: false as const, notice: "Die Adresse wurde nicht gefunden. Bitte Breite und Länge eintragen." };
-    return { ok: true as const, latitude: hit.latitude, longitude: hit.longitude, label: hit.label };
+    const hit = await findLocation(address);
+    if (!hit) return { ok: false, notice: "Die Adresse wurde nicht gefunden. Bitte Breite und Länge eintragen." };
+    return { ok: true, ...hit };
   } catch (error) {
-    return { ok: false as const, notice: error instanceof Error ? error.message : "Die Adresssuche ist nicht erreichbar." };
+    return { ok: false, notice: error instanceof Error ? error.message : "Die Adresssuche ist nicht erreichbar." };
   }
 }
 

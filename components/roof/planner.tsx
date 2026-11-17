@@ -112,7 +112,7 @@ export function RoofPlanner({
     setLatitude(result.latitude);
     setLongitude(result.longitude);
     setLabel(result.label);
-    setSource("nominatim");
+    setSource(result.source);
     setCenterToken((value) => value + 1);
     if (inNrw(result.latitude, result.longitude)) setBasemap("nrw");
     setMessage(result.label);

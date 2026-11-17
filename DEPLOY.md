@@ -25,6 +25,7 @@ In `.env` eintragen:
 - `ADMIN_PASSWORD` mit mindestens 10 Zeichen
 - `ADMIN_NAME`
 - `SEED_DEMO=false`
+- freiwillig `GOOGLE_MAPS_SERVER_KEY` und `GOOGLE_MAPS_BROWSER_KEY` für Adressvorschläge, Standortsuche und Karte; Einrichtung in `docs/google-maps.md`
 
 ## 3. Installieren
 
@@ -76,10 +77,11 @@ Vorher eine Sicherung machen. `docker compose down -v` löscht die Datenbank. Da
 
 ## 7. Ausgehende Verbindungen
 
-Keine API-Schlüssel. Der Server muss diese HTTPS-Hosts erreichen:
+Bis auf die freiwillige Google-Anbindung braucht keiner dieser Dienste einen API-Schlüssel. Der Server muss diese HTTPS-Hosts erreichen:
 
 - `re.jrc.ec.europa.eu` — PVGIS-Ertrag und Horizontprofil (PVGIS © Europäische Union)
 - `nominatim.openstreetmap.org` — Adresssuche, mit eigenem User-Agent und Zwischenspeicher
+- `places.googleapis.com` und `maps.googleapis.com` — nur mit `GOOGLE_MAPS_SERVER_KEY`: Adressvorschläge und Standortsuche (siehe `docs/google-maps.md`)
 - `ogc-api.nrw.de` — LoD2-Gebäude in Nordrhein-Westfalen, Datenlizenz Deutschland – Zero – Version 2.0
 - `www.wms.nrw.de` — Orthofoto NRW für die 3D-Planung, nur als Ausweichweg, wenn der Browser das Bild nicht direkt laden darf (© Geobasis NRW, Datenlizenz Deutschland – Zero – Version 2.0)
 
@@ -87,5 +89,6 @@ Das Luftbild lädt der Browser des Mitarbeiters, nicht der Server:
 
 - `www.wms.nrw.de` — Orthofoto NRW, Datenlizenz Deutschland – Zero – Version 2.0, © Geobasis NRW
 - `server.arcgisonline.com` — Esri Weltluftbild, mit der Quellenangabe in der Karte, nur als Anzeige
+- `maps.googleapis.com` und weitere Adressen von Google — nur mit `GOOGLE_MAPS_BROWSER_KEY`: Karte im Dialog „Standort auf der Karte"
 
-Neue Umgebungsvariablen gibt es dafür nicht.
+Umgebungsvariablen braucht nur die Google-Anbindung (`GOOGLE_MAPS_SERVER_KEY`, `GOOGLE_MAPS_BROWSER_KEY`).

@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { changePassword, createUser, saveCalculationDefaults, saveCompany, saveDocumentSettings, saveStages, updateUser } from "@/app/actions/settings";
-import { Button, Notice, Panel } from "@/components/ui";
+import { changePassword, checkGoogleMaps, createUser, saveCalculationDefaults, saveCompany, saveDocumentSettings, saveStages, updateUser, type GoogleCheck } from "@/app/actions/settings";
+import { GoogleMap } from "@/components/google-map";
+import { Badge, Button, Notice, Panel } from "@/components/ui";
 import { PDF_PAGE_LABELS, type PdfPageSetting } from "@/lib/content";
 
 type Stage = { id: string; name: string; color: string; isWon: boolean; isLost: boolean; active: boolean };
@@ -17,6 +18,7 @@ export function SettingsScreen({
   stages,
   users,
   logo,
+  google,
 }: {
   isAdmin: boolean;
   company: Record<string, string>;
@@ -25,6 +27,8 @@ export function SettingsScreen({
   stages: Stage[];
   users: UserRow[];
   logo: boolean;
+  /** Welche Google-Schlüssel am Server hinterlegt sind. Nur für die Administration gefüllt. */
+  google: { server: boolean; browser: boolean };
 }) {
   const [tab, setTab] = useState(typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "passwort" ? "passwort" : "betrieb");
   const tabs = [
@@ -32,6 +36,7 @@ export function SettingsScreen({
     ["rechnung", "Berechnung"],
     ["pdf", "PDF-Seiten"],
     ["board", "Board"],
+    ["google", "Google Maps"],
     ["nutzer", "Nutzer"],
     ["passwort", "Passwort"],
   ] as const;
@@ -46,6 +51,7 @@ export function SettingsScreen({
       {tab === "rechnung" && isAdmin ? <CalcForm calc={calc} /> : null}
       {tab === "pdf" && isAdmin ? <PdfForm initial={documents} /> : null}
       {tab === "board" && isAdmin ? <StageForm initial={stages} /> : null}
+      {tab === "google" && isAdmin ? <GoogleStatus google={google} /> : null}
       {tab === "nutzer" && isAdmin ? <UserAdmin users={users} /> : null}
       {tab === "passwort" ? <PasswordForm /> : null}
     </div>
@@ -232,5 +238,70 @@ function UserAdmin({ users }: { users: UserRow[] }) {
         </form>
       ))}
     </div>
+  );
+}
+
+/** Stand der Google-Anbindung mit Verbindungsprüfung. Die Schlüssel selbst werden hier nicht angezeigt. */
+function GoogleStatus({ google }: { google: { server: boolean; browser: boolean } }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [checks, setChecks] = useState<GoogleCheck[] | null>(null);
+  const [map, setMap] = useState<{ key: string; latitude: number; longitude: number } | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    setMap(null);
+    const result = await checkGoogleMaps();
+    setBusy(false);
+    if (!result.ok) return setError(result.error);
+    setChecks(result.checks);
+    /* Die Karte prüft den Browser-Schlüssel dort, wo er gebraucht wird: im Browser. Ohne gefundenen Standort zeigt sie Berlin. */
+    if (result.browserKey) setMap({ key: result.browserKey, latitude: result.location?.latitude ?? 52.5186, longitude: result.location?.longitude ?? 13.3762 });
+  }
+
+  const row = (label: string, use: string, name: string, present: boolean) => (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <Badge tone={present ? "ok" : "neutral"}>{present ? "hinterlegt" : "fehlt"}</Badge>
+      <span className="font-semibold">{label}</span>
+      <span className="text-muted">{use} · <code>{name}</code></span>
+    </li>
+  );
+
+  return (
+    <Panel>
+      <h2 className="font-display text-xl">Google Maps</h2>
+      <p className="mt-1 max-w-3xl text-sm text-muted">
+        Adressvorschläge, genauere Standortsuche und die Karte im Angebot kommen von Google. Die zwei Schlüssel stehen in der Datei <code>.env</code> auf dem Server, nicht im Programm. Nach einer Änderung dort muss das Programm neu gestartet werden. Ohne Schlüssel arbeitet alles wie bisher, nur ohne diese drei Funktionen.
+      </p>
+      <ul className="mt-4 space-y-2 text-sm" data-google-keys>
+        {row("Server-Schlüssel", "Adressvorschläge und Standortsuche", "GOOGLE_MAPS_SERVER_KEY", google.server)}
+        {row("Browser-Schlüssel", "Karte im Angebot", "GOOGLE_MAPS_BROWSER_KEY", google.browser)}
+      </ul>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Button type="button" disabled={busy || (!google.server && !google.browser)} onClick={() => void run()}>{busy ? "Prüft…" : "Verbindung prüfen"}</Button>
+        {!google.server && !google.browser ? <span className="text-sm text-muted">Es ist noch kein Schlüssel hinterlegt. Die Anleitung steht in <code>docs/google-maps.md</code>.</span> : null}
+      </div>
+      {error ? <div className="mt-3"><Notice tone="danger">{error}</Notice></div> : null}
+      {checks ? (
+        <ul className="mt-4 space-y-3 text-sm" data-google-checks>
+          {checks.map((check) => (
+            <li key={check.name} className="rounded-xl border border-line bg-white p-3">
+              <p className="flex flex-wrap items-center gap-2 font-semibold"><Badge tone={check.ok ? "ok" : "danger"}>{check.ok ? "in Ordnung" : "Fehler"}</Badge>{check.name}</p>
+              <p className="mt-1 break-words">{check.detail}</p>
+              {check.hint ? <p className="mt-1 text-warn">{check.hint}</p> : null}
+            </li>
+          ))}
+          {checks.length === 0 ? <li className="text-muted">Ohne Server-Schlüssel gibt es keine Adressvorschläge und keine Standortsuche über Google.</li> : null}
+        </ul>
+      ) : null}
+      {map ? (
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-semibold">Karte (Maps JavaScript API)</p>
+          <GoogleMap apiKey={map.key} start={{ latitude: map.latitude, longitude: map.longitude, zoom: 18 }} className="h-80 w-full max-w-3xl" />
+          <p className="mt-1 text-xs text-muted">Erscheint hier ein Satellitenbild mit Fadenkreuz, funktioniert der Browser-Schlüssel.</p>
+        </div>
+      ) : checks && !google.browser ? <p className="mt-4 text-sm text-muted">Ohne Browser-Schlüssel gibt es im Angebot keinen Knopf „Auf der Karte prüfen“.</p> : null}
+    </Panel>
   );
 }
