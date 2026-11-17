@@ -2,6 +2,7 @@ import type { OfferDTO, Specs, VariantDTO } from "@/lib/domain";
 import { yieldRequestKey } from "@/lib/pvgis/faces";
 import { normalizeMounting, type RoofFaceInput } from "@/lib/pvgis/types";
 import { parseRoofGeometry } from "@/lib/roof/parse";
+import { parseTenantPower } from "@/lib/tenant-power";
 
 function text(value: unknown, max: number): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -81,6 +82,7 @@ export function sanitizeOffer(input: unknown): OfferDTO {
     vatDeductible: Boolean(raw.vatDeductible),
     validUntil: typeof raw.validUntil === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.validUntil) ? raw.validUntil : null,
     signedAt: null,
+    tenantPower: parseTenantPower(raw.tenantPower),
     variants,
   };
 }

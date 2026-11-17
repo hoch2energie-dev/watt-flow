@@ -2,6 +2,7 @@ import type { CalcInput, CalcLine } from "@/lib/calc/offer";
 import type { Qualification } from "@/lib/checklist";
 import { yieldRequestKey } from "@/lib/pvgis/faces";
 import type { RoofFaceInput } from "@/lib/pvgis/types";
+import type { TenantPower } from "@/lib/tenant-power";
 
 export type VatCategory = "PV_NULL" | "REGEL";
 export type Segment = "HAUSHALT" | "GEWERBE";
@@ -91,6 +92,8 @@ export type OfferDTO = {
   vatDeductible: boolean;
   validUntil: string | null;
   signedAt: string | null;
+  /** Mieterstrom-Einstellungen. `null`, solange keine angelegt sind. */
+  tenantPower: TenantPower | null;
   variants: VariantDTO[];
 };
 

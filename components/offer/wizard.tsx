@@ -9,6 +9,7 @@ import { Field, NumberField, SelectInput, TextArea, TextInput } from "@/componen
 import { PlanningHub } from "@/components/offer/hub";
 import { LineEditor } from "@/components/offer/line-editor";
 import { ResultsView } from "@/components/offer/results";
+import { TenantPowerDialog, type TenantDialogTab } from "@/components/offer/tenant-power";
 import { FigureStrip, OfferTabs } from "@/components/offer/tabs";
 import { YieldPanel } from "@/components/offer/yield-panel";
 import { Badge, Button, Notice } from "@/components/ui";
@@ -19,6 +20,7 @@ import { formatEuro, formatNumber, formatPercent } from "@/lib/format";
 import { OFFER_STATUS_LABEL, PAYMENT_LABEL } from "@/lib/labels";
 import { navigate } from "@/lib/navigate";
 import { TABS, TOPIC_LABEL, isPlanTopic, type TabId, type TopicId } from "@/lib/offer-overview";
+import type { TenantPower } from "@/lib/tenant-power";
 
 type Meta = {
   customerName: string;
@@ -55,6 +57,8 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
   const [locating, setLocating] = useState(false);
   const [locateNote, setLocateNote] = useState<string | null>(null);
   const [deleteArmed, setDeleteArmed] = useState(false);
+  /* Dialog „Mieterstrom": geschlossen oder offen mit dem Reiter, der zuerst gezeigt wird. */
+  const [tenantTab, setTenantTab] = useState<TenantDialogTab | null>(null);
   const actions = useRef<HTMLDetailsElement>(null);
   const variant = offer.variants.find((entry) => entry.id === variantId) ?? offer.variants[0];
 
@@ -73,10 +77,11 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
 
   const result = useMemo(() => (variant ? calculateOffer(toCalcInput(offer, variant)) : null), [offer, variant]);
 
-  async function persist() {
+  /** Speichert den Stand der Seite oder einen ausdrücklich übergebenen, der gerade erst gesetzt wurde. */
+  async function persist(next: OfferDTO = offer) {
     setSaving(true);
     setError(null);
-    const response = await saveOffer(offer);
+    const response = await saveOffer(next);
     setSaving(false);
     if (!response.ok) {
       setError(response.error);
@@ -84,7 +89,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
       return false;
     }
     setMessage("Gespeichert");
-    setSavedOffer(offer);
+    setSavedOffer(next);
     return true;
   }
 
@@ -102,6 +107,12 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
   }
   function mark(status: "VERSENDET" | "ABGELEHNT") {
     void setOfferStatus(offer.id, status).then(() => setOffer((current) => ({ ...current, status })));
+  }
+  /** Übernimmt den Mieterstrom aus dem Dialog, speichert und schließt ihn, wenn das geklappt hat. */
+  async function saveTenant(tenantPower: TenantPower | null) {
+    const next = { ...offer, tenantPower };
+    setOffer(next);
+    if (await persist(next)) setTenantTab(null);
   }
   function show(next: TabId) {
     setTab(next);
@@ -250,7 +261,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
               <Field label="Nutzbare Fläche m²"><NumberField digits={0} value={offer.roofAreaM2 ?? 0} onChange={(roofAreaM2) => patchOffer({ roofAreaM2 })} /></Field>
               <label className="flex items-center gap-2 text-sm sm:col-span-2 lg:col-span-3"><input type="checkbox" checked={offer.monumentProtected} onChange={(event) => patchOffer({ monumentProtected: event.target.checked })} /> Denkmalschutz oder Gestaltungsvorgabe</label>
               <div className="sm:col-span-2 lg:col-span-3">
-                <Field label="Notiz, zum Beispiel Mieterstrom"><TextArea value={offer.buildingNote} onChange={(event) => patchOffer({ buildingNote: event.target.value })} /></Field>
+                <Field label="Notiz zum Gebäude"><TextArea value={offer.buildingNote} onChange={(event) => patchOffer({ buildingNote: event.target.value })} /></Field>
               </div>
             </div>
           </fieldset>
@@ -259,7 +270,7 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
 
       {tab === "planung" && !topic ? (
         <>
-          <PlanningHub offer={offer} variant={variant} result={result} locked={meta.locked} variantBar={variantBar(true)} onOpen={(next) => { setTopic(next); window.scrollTo({ top: 0 }); }} onPlan={() => void openPlanner()} />
+          <PlanningHub offer={offer} variant={variant} result={result} locked={meta.locked} variantBar={variantBar(true)} onOpen={(next) => { setTopic(next); window.scrollTo({ top: 0 }); }} onPlan={() => void openPlanner()} onTenant={(next) => { setError(null); setTenantTab(next); }} />
           {editVariant && !meta.locked ? (
             <div className="mt-4 flex flex-wrap items-end gap-4 rounded-2xl border border-line bg-elevated p-4">
               <Field label="Variantenname">
@@ -457,6 +468,20 @@ export function OfferWizard({ initial, catalog, meta }: { initial: OfferDTO; cat
             </form>
           ) : null}
         </div>
+      ) : null}
+
+      {tenantTab ? (
+        <TenantPowerDialog
+          initial={offer.tenantPower}
+          startTab={tenantTab}
+          suggest={{ currentPriceCt: offer.electricityPriceEur * 100, feedInCt: variant.eegTariffEur * 100 }}
+          variant={{ name: variant.name, annualYieldKwh: result.yield.annualKwh, batteryKwh: result.batteryKwh, batteryCycles: variant.batteryCyclesPerYear }}
+          locked={meta.locked}
+          saving={saving}
+          saveError={error}
+          onSave={(next) => void saveTenant(next)}
+          onClose={() => setTenantTab(null)}
+        />
       ) : null}
 
       <div className="sticky bottom-3 z-10 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white/95 px-4 py-3 shadow-lg backdrop-blur">

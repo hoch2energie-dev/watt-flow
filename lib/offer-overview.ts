@@ -2,6 +2,7 @@ import type { CalcResult } from "@/lib/calc/offer";
 import { annualConsumption, type OfferDTO, type VariantDTO } from "@/lib/domain";
 import { formatEuro, formatNumber, formatPercent } from "@/lib/format";
 import { activeModuleCount } from "@/lib/roof/types";
+import { TARIFF_LABEL, TENANT_MODELS, tenantGaps, tenantSummary, type TenantPower } from "@/lib/tenant-power";
 
 /**
  * Gliederung der Angebotsseite: Reiter oben, im Reiter Planung die Themenhubs
@@ -24,6 +25,9 @@ export const THEMES: { id: ThemeId; label: string }[] = [
   { id: "waerme", label: "Wärme" },
   { id: "mobilitaet", label: "Mobilität" },
 ];
+
+/** Spalten des Hubs: die drei Themen und der Mieterstrom, der in einem eigenen Dialog bearbeitet wird. */
+export type HubColumnId = ThemeId | "mieterstrom";
 
 /** Bearbeitungsbereiche im Reiter Planung. Die ersten drei gelten fürs ganze Angebot, die übrigen je Variante. */
 export type TopicId = "strom" | "waerme" | "mobilitaet" | "pv" | "speicher" | "waermepumpe" | "wallbox" | "extras";
@@ -121,6 +125,52 @@ export function baselineTiles(offer: OfferDTO): Record<ThemeId, BaselineTile[]> 
       },
     ],
   };
+}
+
+/** Kachel zum Mieterstrom. Leerer `value` heißt: nichts zu zeigen, die Kachel erklärt mit `detail`, was fehlt. */
+export type TenantTile = { value: string; detail: string; note: string; warn: boolean };
+
+const ct = (value: number) => `${formatNumber(value, 1)} ct`;
+const parties = (count: number) => (count === 1 ? "1 Mietpartei" : `${formatNumber(count, 0)} Mietparteien`);
+
+/** Ausgangslage: gewähltes Modell, Mieter und der vorgesehene Tarif in Bruttopreisen. */
+export function tenantBaseline(config: TenantPower | null): TenantTile {
+  if (!config) return { value: "", detail: "", note: "", warn: false };
+  const value = TENANT_MODELS.find((model) => model.id === config.model)?.label ?? "";
+  if (config.model === "volleinspeisung") {
+    return { value, detail: config.feedInCt > 0 ? `Vergütung ${ct(config.feedInCt)}/kWh` : "Vergütung noch offen", note: "", warn: false };
+  }
+  const summary = tenantSummary(config, 0);
+  const detail = summary.tenantCount > 0 ? `${parties(summary.tenantCount)} · ${formatNumber(summary.demandKwh, 0)} kWh pro Jahr` : "Noch keine Mieter eingetragen";
+  let note = "Tarif noch offen";
+  if (config.model === "versorger" && config.tariffMode === "mischtarif") {
+    if (config.mixedPriceCt > 0) note = `${TARIFF_LABEL.mischtarif}: ${ct(summary.gross.mixedCt)}/kWh brutto`;
+  } else if (config.model === "versorger") {
+    if (config.pvPriceCt > 0 && config.gridPriceCt > 0) note = `${TARIFF_LABEL.zweitarif}: ${ct(summary.gross.pvCt)} Solar · ${ct(summary.gross.gridCt)} Rest, brutto`;
+    else if (config.pvPriceCt > 0 || config.gridPriceCt > 0) note = "Tarif noch unvollständig";
+  } else if (config.pvPriceCt > 0) {
+    note = `Solarstrom: ${ct(summary.gross.pvCt)}/kWh brutto`;
+  }
+  return { value, detail, note, warn: false };
+}
+
+/** Planung: Überschlag für den Betreiber mit dem Jahresertrag der gewählten Variante und was die Mieter davon haben. */
+export function tenantOutcome(config: TenantPower | null, annualYieldKwh: number): TenantTile {
+  if (!config) return { value: "", detail: "Erscheint, sobald der Mieterstrom eingerichtet ist.", note: "", warn: false };
+  const gaps = tenantGaps(config);
+  if (gaps.length > 0) return { value: "", detail: `Es fehlt noch: ${gaps.join(", ")}.`, note: "", warn: false };
+  const summary = tenantSummary(config, annualYieldKwh);
+  const value = `${formatEuro(summary.yearlyTotal)} pro Jahr`;
+  const detail = config.model === "volleinspeisung" ? "Vergütung für die Einspeisung, netto" : "Überschlag für den Betreiber, netto, vor Betriebskosten";
+  if (annualYieldKwh <= 0) return { value, detail, note: "Noch keine Anlage geplant, gerechnet ohne Einspeisung.", warn: false };
+  const groups = summary.groups.filter((group) => group.count > 0);
+  if (groups.length === 0) return { value, detail, note: "", warn: false };
+  if (groups.some((group) => group.withinCap === false)) return { value, detail, note: "Tarif liegt über 90 % der Grundversorgung.", warn: true };
+  const low = Math.min(...groups.map((group) => group.savingEur));
+  const high = Math.max(...groups.map((group) => group.savingEur));
+  if (low < 0) return { value, detail, note: "Für mindestens eine Mietergruppe wird der Strom teurer als bisher.", warn: true };
+  const range = Math.round(low) === Math.round(high) ? formatEuro(Math.round(high)) : `${formatEuro(Math.round(low))} bis ${formatEuro(Math.round(high))}`;
+  return { value, detail, note: `Mieter sparen ${range} pro Jahr und Partei.`, warn: false };
 }
 
 /** Kurzwert einer Planungskachel. Leerer `value` heißt: noch nichts geplant. */

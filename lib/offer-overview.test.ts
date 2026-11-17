@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { calculateOffer } from "@/lib/calc/offer";
 import { toCalcInput } from "@/lib/domain";
-import { PLAN_TOPICS, TABS, THEMES, TOPIC_SECTIONS, baselineTiles, isPlanTopic, keyFigures, planSummary, solarProgress, topicItems, topicNet, type PlanTopic } from "@/lib/offer-overview";
+import { PLAN_TOPICS, TABS, THEMES, TOPIC_SECTIONS, baselineTiles, isPlanTopic, keyFigures, planSummary, solarProgress, tenantBaseline, tenantOutcome, topicItems, topicNet, type PlanTopic } from "@/lib/offer-overview";
 import type { LngLat } from "@/lib/roof/geo";
 import { newBuilding } from "@/lib/roof3d/building";
 import { facesFromBuildings } from "@/lib/roof3d/faces";
 import { setCells, updatePlan } from "@/lib/roof3d/plans";
+import { newTenantPower, type TenantPower } from "@/lib/tenant-power";
 import { demoOffer } from "@/preview/demo-data";
 
 describe("Angebotsseite: Reiter, Themenhubs, Kacheln", () => {
@@ -77,5 +78,46 @@ describe("Angebotsseite: Reiter, Themenhubs, Kacheln", () => {
     const none = keyFigures(calculateOffer(toCalcInput(offer, { ...variant, lines: [] })));
     expect(none.find((figure) => figure.label === "Produktion")?.value).toBe("–");
     expect(none.find((figure) => figure.label === "Marge")?.value).toBe("–");
+  });
+});
+
+describe("Angebotsseite: Mieterstrom im Hub", () => {
+  const filled: TenantPower = {
+    ...newTenantPower("versorger", { currentPriceCt: 38, feedInCt: 7 }, () => "m1"),
+    pvPriceCt: 22,
+    gridPriceCt: 30,
+    mixedPriceCt: 27,
+    baseFeeEur: 8,
+    pvSharePct: 40,
+    gridPurchaseCt: 24,
+    surchargeCt: 2.5,
+    basicPriceCt: 40,
+    basicBaseEur: 12,
+    tenants: [{ id: "m1", name: "Wohnungen", kind: "privat", count: 4, annualKwh: 2500, currentPriceCt: 38, currentBaseEur: 10 }],
+  };
+
+  it("zeigt in der Ausgangslage Modell, Mieter und den Tarif in Bruttopreisen", () => {
+    expect(tenantBaseline(null).value).toBe("");
+    expect(tenantBaseline(filled)).toMatchObject({ value: "Energieversorger", detail: "4 Mietparteien · 10.000 kWh pro Jahr", note: "Zweitarif: 26,2 ct Solar · 35,7 ct Rest, brutto" });
+    expect(tenantBaseline({ ...filled, tariffMode: "mischtarif" }).note).toBe("Mischtarif: 32,1 ct/kWh brutto");
+    expect(tenantBaseline({ ...filled, model: "direkt" })).toMatchObject({ value: "Direkte Vermarktung", note: "Solarstrom: 26,2 ct/kWh brutto" });
+    expect(tenantBaseline({ ...filled, pvPriceCt: 0, gridPriceCt: 0 }).note).toBe("Tarif noch offen");
+    expect(tenantBaseline({ ...filled, gridPriceCt: 0 }).note).toBe("Tarif noch unvollständig");
+    expect(tenantBaseline({ ...filled, model: "volleinspeisung", tenants: [] })).toMatchObject({ value: "Volleinspeisung", detail: "Vergütung 7,0 ct/kWh" });
+  });
+
+  it("rechnet den Überschlag mit dem Ertrag der Variante und nennt, was die Mieter sparen", () => {
+    expect(tenantOutcome(null, 20000).value).toBe("");
+    const outcome = tenantOutcome(filled, 20000);
+    expect(outcome.value.replace(/\s/g, " ")).toBe("2.844,00 € pro Jahr");
+    expect(outcome.note.replace(/\s/g, " ")).toBe("Mieter sparen 158,00 € pro Jahr und Partei.");
+    expect(outcome.warn).toBe(false);
+  });
+
+  it("sagt, was noch fehlt, und warnt bei zu teurem Tarif", () => {
+    expect(tenantOutcome({ ...filled, gridPurchaseCt: 0 }, 20000)).toMatchObject({ value: "", detail: "Es fehlt noch: Einkaufspreis für Reststrom." });
+    expect(tenantOutcome({ ...filled, pvPriceCt: 32, gridPriceCt: 38 }, 20000)).toMatchObject({ note: "Tarif liegt über 90 % der Grundversorgung.", warn: true });
+    expect(tenantOutcome({ ...filled, basicPriceCt: 0, pvPriceCt: 34, gridPriceCt: 40 }, 20000)).toMatchObject({ note: "Für mindestens eine Mietergruppe wird der Strom teurer als bisher.", warn: true });
+    expect(tenantOutcome(filled, 0).note).toBe("Noch keine Anlage geplant, gerechnet ohne Einspeisung.");
   });
 });

@@ -1,16 +1,20 @@
 "use client";
 
-import { ArrowRight, Car, Check, Circle, Flame, Plus, Zap, type LucideIcon } from "lucide-react";
+import { ArrowRight, Car, Check, Circle, Flame, Plus, Users, Zap, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui";
 import type { CalcResult } from "@/lib/calc/offer";
 import type { OfferDTO, VariantDTO } from "@/lib/domain";
-import { PLAN_TOPICS, THEMES, TOPIC_LABEL, baselineTiles, planSummary, solarProgress, type PlanTopic, type ThemeId, type TopicId } from "@/lib/offer-overview";
+import { PLAN_TOPICS, THEMES, TOPIC_LABEL, baselineTiles, planSummary, solarProgress, tenantBaseline, tenantOutcome, type HubColumnId, type PlanTopic, type TopicId } from "@/lib/offer-overview";
 
-const THEME_STYLE: Record<ThemeId, { icon: LucideIcon; chip: string }> = {
+const THEME_STYLE: Record<HubColumnId, { icon: LucideIcon; chip: string }> = {
   strom: { icon: Zap, chip: "bg-amber-100 text-amber-800" },
   waerme: { icon: Flame, chip: "bg-accent-soft text-accent" },
   mobilitaet: { icon: Car, chip: "bg-sky-100 text-sky-800" },
+  mieterstrom: { icon: Users, chip: "bg-emerald-100 text-emerald-800" },
 };
+
+/** Spaltenraster des Hubs: vier Themen nebeneinander, auf schmalen Schirmen zwei oder eine. */
+const HUB_GRID = "grid gap-x-4 gap-y-6 md:grid-cols-2 xl:grid-cols-4";
 
 const PLAN_EMPTY: Record<PlanTopic, string> = {
   pv: "Dach zeichnen, Module belegen, Wechselrichter wählen.",
@@ -22,7 +26,8 @@ const PLAN_EMPTY: Record<PlanTopic, string> = {
 
 /**
  * Reiter „Planung": oben je Thema die Ausgangslage beim Kunden, darunter die Anlagen
- * der gewählten Variante. Jede Kachel führt in ihren Bearbeitungsbereich.
+ * der gewählten Variante. Jede Kachel führt in ihren Bearbeitungsbereich; der Mieterstrom
+ * öffnet stattdessen seinen Dialog.
  */
 export function PlanningHub({
   offer,
@@ -32,6 +37,7 @@ export function PlanningHub({
   variantBar,
   onOpen,
   onPlan,
+  onTenant,
 }: {
   offer: OfferDTO;
   variant: VariantDTO;
@@ -42,14 +48,19 @@ export function PlanningHub({
   onOpen: (topic: TopicId) => void;
   /** Speichert und öffnet die 3D-Planung. */
   onPlan: () => void;
+  /** Öffnet den Dialog „Mieterstrom", wahlweise gleich mit der Zusammenfassung. */
+  onTenant: (tab: "allgemein" | "zusammenfassung") => void;
 }) {
   const baseline = baselineTiles(offer);
   const progress = solarProgress(variant);
+  const tenant = tenantBaseline(offer.tenantPower);
+  const outcome = tenantOutcome(offer.tenantPower, result.yield.annualKwh);
+  const TenantIcon = THEME_STYLE.mieterstrom.icon;
   return (
     <div className="mt-5 space-y-8">
       <section aria-labelledby="hub-ausgangslage">
         <h2 id="hub-ausgangslage" className="sr-only">Ausgangslage beim Kunden</h2>
-        <div className="grid gap-x-4 gap-y-6 lg:grid-cols-3">
+        <div className={HUB_GRID}>
           {THEMES.map((theme) => {
             const { icon: Icon, chip } = THEME_STYLE[theme.id];
             return (
@@ -77,6 +88,27 @@ export function PlanningHub({
               </div>
             );
           })}
+          <div className="min-w-0 space-y-3" data-theme="mieterstrom">
+            <h3 className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-semibold ${THEME_STYLE.mieterstrom.chip}`}>
+              <TenantIcon size={16} aria-hidden /> Mieterstrom
+            </h3>
+            <Tile id="mieterstrom" title="Vermarktung und Tarif" filled={Boolean(tenant.value)}>
+              {tenant.value ? (
+                <>
+                  <p className="text-xl font-semibold">{tenant.value}</p>
+                  <p className="text-sm text-muted">{tenant.detail}</p>
+                  {tenant.note ? <p className="text-sm text-muted">{tenant.note}</p> : null}
+                </>
+              ) : (
+                <p className="text-sm text-muted">Solarstrom an die Mieter verkaufen: Modell wählen, Tarif und Mieter eintragen.</p>
+              )}
+              <TileAction>
+                <Button type="button" size="sm" variant="secondary" onClick={() => onTenant("allgemein")}>
+                  {tenant.value ? (locked ? "Ansehen" : "Bearbeiten") : locked ? "Ansehen" : "Einrichten"} <ArrowRight size={15} aria-hidden />
+                </Button>
+              </TileAction>
+            </Tile>
+          </div>
         </div>
       </section>
 
@@ -85,7 +117,7 @@ export function PlanningHub({
           <h2 id="hub-planung" className="font-display text-2xl">Planung</h2>
           {variantBar}
         </div>
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className={HUB_GRID}>
           {THEMES.map((theme) => (
             <div key={theme.id} className="min-w-0 space-y-4" data-plan-theme={theme.id}>
               {PLAN_TOPICS[theme.id].map((topic) => {
@@ -128,6 +160,20 @@ export function PlanningHub({
               })}
             </div>
           ))}
+          <div className="min-w-0 space-y-4" data-plan-theme="mieterstrom">
+            <Tile id="mieterstrom-ergebnis" title="Mieterstrom-Überschlag" filled={Boolean(outcome.value)}>
+              {outcome.value ? <p className="text-xl font-semibold tabular-nums">{outcome.value}</p> : null}
+              <p className="text-sm text-muted">{outcome.detail}</p>
+              {outcome.note ? <p className={`mt-1 text-sm ${outcome.warn ? "font-semibold text-warn" : "text-muted"}`}>{outcome.note}</p> : null}
+              {offer.tenantPower ? (
+                <TileAction>
+                  <Button type="button" size="sm" variant="secondary" onClick={() => onTenant(outcome.value ? "zusammenfassung" : "allgemein")}>
+                    {outcome.value ? "Zusammenfassung" : "Angaben ergänzen"} <ArrowRight size={15} aria-hidden />
+                  </Button>
+                </TileAction>
+              ) : null}
+            </Tile>
+          </div>
         </div>
       </section>
     </div>

@@ -115,6 +115,7 @@ export async function saveOffer(input: unknown) {
         vatZeroEligible: offer.vatZeroEligible,
         vatDeductible: offer.vatDeductible,
         validUntil: offer.validUntil ? new Date(`${offer.validUntil}T12:00:00.000Z`) : null,
+        tenantPower: offer.tenantPower ? (offer.tenantPower as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
       },
     });
 

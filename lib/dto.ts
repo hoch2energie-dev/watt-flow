@@ -3,6 +3,7 @@ import { asSpecs, type CatalogOption, type LineDTO, type OfferDTO, type VariantD
 import { normalizeMounting } from "@/lib/pvgis/types";
 import { parseRoofGeometry } from "@/lib/roof/parse";
 import { isoDateInput } from "@/lib/format";
+import { parseTenantPower } from "@/lib/tenant-power";
 
 function dec(value: { toString(): string } | number | null | undefined): number {
   if (value == null) return 0;
@@ -120,6 +121,7 @@ export function toOfferDTO(offer: Offer & { variants: (OfferVariant & { lines: O
     vatDeductible: offer.vatDeductible,
     validUntil: offer.validUntil ? isoDateInput(offer.validUntil) : null,
     signedAt: offer.signedAt ? offer.signedAt.toISOString() : null,
+    tenantPower: parseTenantPower(offer.tenantPower),
     variants: [...offer.variants].sort((a, b) => a.sortOrder - b.sortOrder).map(toVariantDTO),
   };
 }

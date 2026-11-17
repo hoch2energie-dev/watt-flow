@@ -65,6 +65,7 @@ export function demoOffer(): OfferDTO {
     vatDeductible: false,
     validUntil: null,
     signedAt: null,
+    tenantPower: null,
     variants: [
       {
         id: "demo-variante",
